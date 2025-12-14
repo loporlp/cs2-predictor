@@ -7,6 +7,7 @@ API_KEY = os.getenv("LIQUIPEDIA_API_KEY")
 
 BASE_URLS = {
     "tournament": "https://api.liquipedia.net/api/v3/tournament",
+    "match": "https://api.liquipedia.net/api/v3/match"
 }
 
 HEADERS = {
