@@ -11,8 +11,8 @@ def build_tournament_table():
     parsed = [normalize_tournament(t) for t in raw]
 
     df = pd.DataFrame(parsed)
-    df["startdate"] = pd.to_datetime(df["startdate"])
-    df["enddate"] = pd.to_datetime(df["enddate"])
+    df["startdate"] = pd.to_datetime(df["startdate"], errors='coerce')
+    df["enddate"] = pd.to_datetime(df["enddate"], errors='coerce')
 
     df.to_csv(OUTPUT_PATH, index=False)
     print(f"Saved {len(df)} tournaments → {OUTPUT_PATH}")
