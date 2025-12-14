@@ -1,0 +1,68 @@
+# =====================
+# Python Environment
+# =====================
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# =====================
+# Python Artifacts
+# =====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =====================
+# Jupyter Notebooks
+# =====================
+.ipynb_checkpoints/
+# Uncomment if you want to ignore all notebooks entirely
+# *.ipynb
+
+# =====================
+# Data and Models
+# =====================
+# Raw or processed datasets
+data/
+*.csv
+*.tsv
+*.json
+*.h5
+*.hdf5
+*.pkl
+*.pt
+*.ckpt
+*.joblib
+*.weights
+
+# =====================
+# Logs and Temporary Files
+# =====================
+logs/
+*.log
+*.tmp
+*.bak
+
+# =====================
+# IDE / Editor
+# =====================
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# =====================
+# Miscellaneous
+# =====================
+*.DS_Store
+*.swp
