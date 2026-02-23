@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CS2 Pick'em Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .dropdown-item:hover { background: #f1f5f9; }
+    .dropdown-item.highlighted { background: #e2e8f0; }
+    .team-row.filled input { border-color: #3b82f6; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans text-slate-800">
+
+  <!-- Header -->
+  <header class="bg-slate-900 text-white py-4 px-6 shadow-lg">
+    <div class="max-w-5xl mx-auto flex items-center gap-3">
+      <span class="text-2xl">🎯</span>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">CS2 Pick'em Simulator</h1>
+        <p class="text-slate-400 text-sm">Monte Carlo Swiss bracket simulation</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6 space-y-5">
+
+    <!-- Settings -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Tournament Settings</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Tier</label>
+          <select id="tier" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="1" selected>1 — Major</option>
+            <option value="2">2 — Challenger</option>
+            <option value="3">3 — Open</option>
+            <option value="4">4 — Amateur</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Prize Pool (USD)</label>
+          <input id="prizepool" type="number" value="1250000" min="0"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Type</label>
+          <select id="ttype" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="Offline" selected>Offline</option>
+            <option value="Online">Online</option>
+            <option value="Online/Offline">Online/Offline</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Simulations</label>
+          <input id="simulations" type="number" value="10000" min="100" max="100000" step="1000"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Lineup Builder -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider">Lineup
+          <span id="fill-counter" class="ml-2 text-blue-500 font-bold normal-case text-base">0/16</span>
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="clearAll()"
+            class="text-xs text-slate-500 hover:text-red-500 border border-slate-300 rounded-lg px-3 py-1.5 transition-colors">
+            Clear all
+          </button>
+          <button onclick="addSlot()"
+            class="text-xs text-white bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-1.5 transition-colors">
+            + Add slot
+          </button>
+          <button onclick="removeSlot()"
+            class="text-xs text-slate-500 hover:text-red-500 border border-slate-300 rounded-lg px-3 py-1.5 transition-colors">
+            − Remove slot
+          </button>
+        </div>
+      </div>
+
+      <!-- Search hint -->
+      <p class="text-xs text-slate-400 mb-3">Type a team name in any slot — results are sorted by Elo rating.</p>
+
+      <div id="lineup-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <!-- Rows injected by JS -->
+      </div>
+    </section>
+
+    <!-- Run Button -->
+    <div class="flex justify-end">
+      <button id="run-btn" onclick="runSimulation()"
+        class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold px-8 py-3 rounded-xl shadow transition-colors text-sm">
+        Run Simulation
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden text-center py-8 text-slate-500">
+      <div class="inline-block animate-spin text-3xl mb-2">⚙️</div>
+      <p class="text-sm">Running simulations…</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm"></div>
+
+    <!-- Results -->
+    <section id="results" class="hidden space-y-5">
+
+      <!-- Recommendations -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Pick'em Recommendations</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4" id="reco-cards"></div>
+      </div>
+
+      <!-- Warnings -->
+      <div id="warnings-box" class="hidden bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-xl p-4 text-sm space-y-1"></div>
+
+      <!-- Table -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100">
+          <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider">Results</h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                <th class="px-4 py-3 text-left">Team</th>
+                <th class="px-3 py-3 text-center">Seed</th>
+                <th class="px-3 py-3 text-center text-green-700">Advance%</th>
+                <th class="px-3 py-3 text-center text-red-600">Elim%</th>
+                <th class="px-3 py-3 text-center">3-0%</th>
+                <th class="px-3 py-3 text-center">3-1%</th>
+                <th class="px-3 py-3 text-center">3-2%</th>
+                <th class="px-3 py-3 text-center">2-3%</th>
+                <th class="px-3 py-3 text-center">1-3%</th>
+                <th class="px-3 py-3 text-center">0-3%</th>
+                <th class="px-3 py-3 text-center">Avg W-L</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────
+    let allTeams = [];         // [{name, elo, matches}]
+    let slotCount = 16;
+    let activeDropdown = null; // currently open dropdown input el
+    let dropdownTeams = [];    // filtered list for current dropdown
+    let dropdownIdx = -1;      // keyboard highlight index
+
+    // ── Boot ───────────────────────────────────────────────────────────────
+    async function init() {
+      renderSlots();
+      try {
+        const res = await fetch('/api/teams');
+        allTeams = await res.json();
+      } catch (e) {
+        showError('Could not load team list. Is the server running?');
+      }
+    }
+
+    // ── Slot rendering ─────────────────────────────────────────────────────
+    function renderSlots() {
+      const grid = document.getElementById('lineup-grid');
+      const existing = Array.from(grid.querySelectorAll('.team-row')).map(r => ({
+        name: r.querySelector('input').value,
+      }));
+
+      grid.innerHTML = '';
+      for (let i = 1; i <= slotCount; i++) {
+        const savedName = existing[i - 1]?.name || '';
+        grid.innerHTML += slotHTML(i, savedName);
+      }
+      updateCounter();
+    }
+
+    function slotHTML(seed, name) {
+      return `
+      <div class="team-row relative ${name ? 'filled' : ''}" data-seed="${seed}">
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold shrink-0">${seed}</span>
+          <div class="relative flex-1">
+            <input
+              type="text"
+              value="${escHtml(name)}"
+              placeholder="Search team…"
+              autocomplete="off"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 pr-7"
+              oninput="onInput(this)"
+              onfocus="onFocus(this)"
+              onblur="onBlur(this)"
+              onkeydown="onKey(event, this)"
+            />
+            ${name ? `<button class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 text-xs" onclick="clearSlot(this)">✕</button>` : ''}
+          </div>
+        </div>
+        <div class="dropdown hidden absolute z-50 left-9 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm"></div>
+      </div>`;
+    }
+
+    function addSlot() {
+      slotCount = Math.min(slotCount + 1, 32);
+      appendSlot(slotCount);
+      updateCounter();
+    }
+
+    function appendSlot(seed) {
+      const grid = document.getElementById('lineup-grid');
+      const div = document.createElement('div');
+      div.innerHTML = slotHTML(seed, '');
+      grid.appendChild(div.firstElementChild);
+    }
+
+    function removeSlot() {
+      if (slotCount <= 2) return;
+      const rows = document.querySelectorAll('.team-row');
+      rows[rows.length - 1].remove();
+      slotCount--;
+      updateCounter();
+    }
+
+    function clearAll() {
+      document.querySelectorAll('.team-row input').forEach(inp => {
+        inp.value = '';
+        inp.closest('.team-row').classList.remove('filled');
+        const btn = inp.closest('.team-row').querySelector('button');
+        if (btn) btn.remove();
+      });
+      updateCounter();
+    }
+
+    function clearSlot(btn) {
+      const row = btn.closest('.team-row');
+      const inp = row.querySelector('input');
+      inp.value = '';
+      row.classList.remove('filled');
+      btn.remove();
+      updateCounter();
+    }
+
+    function updateCounter() {
+      const filled = document.querySelectorAll('.team-row.filled').length;
+      const total = document.querySelectorAll('.team-row').length;
+      document.getElementById('fill-counter').textContent = `${filled}/${total}`;
+      document.getElementById('run-btn').disabled = filled < 2 || filled % 2 !== 0 || filled !== total;
+    }
+
+    // ── Autocomplete ───────────────────────────────────────────────────────
+    function onFocus(inp) {
+      activeDropdown = inp;
+      showDropdown(inp);
+    }
+
+    function onBlur(inp) {
+      setTimeout(() => closeDropdown(inp), 150);
+    }
+
+    function onInput(inp) {
+      activeDropdown = inp;
+      showDropdown(inp);
+    }
+
+    function onKey(e, inp) {
+      const dd = inp.closest('.team-row').querySelector('.dropdown');
+      const items = dd.querySelectorAll('.dropdown-item');
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        dropdownIdx = Math.min(dropdownIdx + 1, items.length - 1);
+        highlightItem(items);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        dropdownIdx = Math.max(dropdownIdx - 1, 0);
+        highlightItem(items);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (dropdownIdx >= 0 && items[dropdownIdx]) {
+          selectTeam(inp, dropdownTeams[dropdownIdx].name);
+        }
+      } else if (e.key === 'Escape') {
+        closeDropdown(inp);
+      }
+    }
+
+    function highlightItem(items) {
+      items.forEach((el, i) => {
+        el.classList.toggle('highlighted', i === dropdownIdx);
+        if (i === dropdownIdx) el.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function showDropdown(inp) {
+      const query = inp.value.trim().toLowerCase();
+      const row = inp.closest('.team-row');
+      const dd = row.querySelector('.dropdown');
+      dropdownIdx = -1;
+
+      // Filter teams, exclude already-selected in other slots
+      const usedNames = new Set(
+        Array.from(document.querySelectorAll('.team-row.filled input'))
+          .filter(i => i !== inp)
+          .map(i => i.value)
+      );
+
+      dropdownTeams = allTeams
+        .filter(t => !usedNames.has(t.name) && (!query || t.name.toLowerCase().includes(query)))
+        .slice(0, 20);
+
+      if (dropdownTeams.length === 0) {
+        dd.classList.add('hidden');
+        return;
+      }
+
+      dd.innerHTML = dropdownTeams.map((t, i) => `
+        <div class="dropdown-item px-3 py-2 cursor-pointer flex justify-between items-center gap-2"
+             onmousedown="selectTeam(document.activeElement, '${escHtml(t.name)}')" data-idx="${i}">
+          <span class="truncate font-medium">${highlight(t.name, query)}</span>
+          <span class="text-xs text-slate-400 shrink-0">${t.elo} ELO · ${t.matches}m</span>
+        </div>`).join('');
+
+      dd.classList.remove('hidden');
+    }
+
+    function closeDropdown(inp) {
+      const dd = inp.closest('.team-row').querySelector('.dropdown');
+      dd.classList.add('hidden');
+      dropdownTeams = [];
+      dropdownIdx = -1;
+    }
+
+    function selectTeam(inp, name) {
+      inp.value = name;
+      const row = inp.closest('.team-row');
+      row.classList.add('filled');
+
+      // Add/refresh clear button
+      let btn = row.querySelector('button');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.className = 'absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 text-xs';
+        btn.setAttribute('onclick', 'clearSlot(this)');
+        btn.textContent = '✕';
+        inp.parentElement.appendChild(btn);
+      }
+
+      closeDropdown(inp);
+      updateCounter();
+    }
+
+    // ── Simulation ─────────────────────────────────────────────────────────
+    async function runSimulation() {
+      hideError();
+      document.getElementById('results').classList.add('hidden');
+      document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('run-btn').disabled = true;
+
+      const lineup = Array.from(document.querySelectorAll('.team-row')).map((row, i) => ({
+        seed: i + 1,
+        name: row.querySelector('input').value.trim(),
+      })).filter(e => e.name);
+
+      const payload = {
+        lineup,
+        tier: parseInt(document.getElementById('tier').value),
+        prizepool: parseFloat(document.getElementById('prizepool').value),
+        t_type: document.getElementById('ttype').value,
+        n_simulations: parseInt(document.getElementById('simulations').value),
+      };
+
+      try {
+        const res = await fetch('/api/simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        renderResults(data.result);
+      } catch (e) {
+        showError('Simulation failed: ' + e.message);
+      } finally {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('run-btn').disabled = false;
+        updateCounter(); // re-check disabled state
+      }
+    }
+
+    // ── Results rendering ──────────────────────────────────────────────────
+    function renderResults(result) {
+      const teams = [...result.teams].sort((a, b) => b.advance_pct - a.advance_pct);
+
+      // Warnings
+      const wb = document.getElementById('warnings-box');
+      if (result.warnings && result.warnings.length > 0) {
+        wb.innerHTML = result.warnings.map(w => `<p>⚠️ ${escHtml(w)}</p>`).join('');
+        wb.classList.remove('hidden');
+      } else {
+        wb.classList.add('hidden');
+      }
+
+      // Recommendation cards
+      const best30 = [...teams].sort((a, b) => b.record_3_0_pct - a.record_3_0_pct)[0];
+      const best03 = [...teams].sort((a, b) => b.record_0_3_pct - a.record_0_3_pct)[0];
+      const topAdv = teams[0];
+      const topElim = [...teams].sort((a, b) => b.eliminate_pct - a.eliminate_pct)[0];
+
+      document.getElementById('reco-cards').innerHTML = [
+        recoCard('🏆', 'Best 3-0 pick', best30.name, best30.record_3_0_pct + '% chance', 'border-yellow-300 bg-yellow-50'),
+        recoCard('💀', 'Best 0-3 pick', best03.name, best03.record_0_3_pct + '% chance', 'border-red-200 bg-red-50'),
+        recoCard('📈', 'Most likely to advance', topAdv.name, topAdv.advance_pct + '% advance', 'border-green-200 bg-green-50'),
+        recoCard('📉', 'Most likely eliminated', topElim.name, topElim.eliminate_pct + '% elim', 'border-slate-200 bg-slate-50'),
+      ].join('');
+
+      // Table
+      document.getElementById('results-tbody').innerHTML = teams.map((t, i) => {
+        const advColor = t.advance_pct >= 70 ? 'text-green-700 font-semibold' : t.advance_pct >= 40 ? 'text-slate-700' : 'text-slate-400';
+        const elimColor = t.eliminate_pct >= 70 ? 'text-red-600 font-semibold' : t.eliminate_pct >= 40 ? 'text-slate-700' : 'text-slate-400';
+        const rowBg = i % 2 === 0 ? '' : 'bg-slate-50/50';
+        return `
+        <tr class="${rowBg} hover:bg-blue-50/30 transition-colors">
+          <td class="px-4 py-2.5 font-medium">${escHtml(t.name)}</td>
+          <td class="px-3 py-2.5 text-center text-slate-500">${t.seed}</td>
+          <td class="px-3 py-2.5 text-center ${advColor}">${t.advance_pct}</td>
+          <td class="px-3 py-2.5 text-center ${elimColor}">${t.eliminate_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_0_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_1_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_2_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_2_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_1_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_0_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-500 text-xs">${t.avg_wins.toFixed(2)}-${t.avg_losses.toFixed(2)}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('results').classList.remove('hidden');
+      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function recoCard(icon, label, name, sub, borderClass) {
+      return `
+      <div class="border rounded-xl p-4 ${borderClass}">
+        <div class="text-lg mb-1">${icon}</div>
+        <div class="text-xs text-slate-500 mb-1">${label}</div>
+        <div class="font-semibold text-slate-800 leading-tight">${escHtml(name)}</div>
+        <div class="text-xs text-slate-500 mt-1">${sub}</div>
+      </div>`;
+    }
+
+    // ── Utilities ──────────────────────────────────────────────────────────
+    function escHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function highlight(name, query) {
+      if (!query) return escHtml(name);
+      const idx = name.toLowerCase().indexOf(query);
+      if (idx === -1) return escHtml(name);
+      return escHtml(name.slice(0, idx))
+        + `<mark class="bg-yellow-200 rounded">${escHtml(name.slice(idx, idx + query.length))}</mark>`
+        + escHtml(name.slice(idx + query.length));
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error-box');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+
+    function hideError() {
+      document.getElementById('error-box').classList.add('hidden');
+    }
+
+    // ── Start ──────────────────────────────────────────────────────────────
+    init();
+  </script>
+</body>
+</html>
