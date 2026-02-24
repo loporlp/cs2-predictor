@@ -52,8 +52,15 @@ def get_models():
     }
 
 
-def train_pipeline():
-    """Full training pipeline: load, split, train, evaluate, save."""
+def train_pipeline(cutoff_date=None):
+    """Full training pipeline: load, split, train, evaluate, save.
+
+    Args:
+        cutoff_date: Optional YYYY-MM-DD string passed through from
+                     build_feature_matrix; recorded in metadata only.
+    Returns:
+        dict of training metadata (best model, metrics, periods, etc.)
+    """
     logger.info("=" * 60)
     logger.info("STARTING MODEL TRAINING PIPELINE")
     logger.info("=" * 60)
@@ -130,6 +137,7 @@ def train_pipeline():
     # Save training metadata
     metadata = {
         "best_model": best_name,
+        "cutoff_date": cutoff_date,
         "feature_columns": FEATURE_COLS,
         "train_size": len(X_train),
         "test_size": len(X_test),
@@ -174,6 +182,8 @@ def train_pipeline():
     for name, res in sorted(results.items(), key=lambda x: x[1]["metrics"]["log_loss"]):
         m = res["metrics"]
         logger.info(f"  {name}: log_loss={m['log_loss']:.4f}, accuracy={m['accuracy']:.4f}, auc={m['roc_auc']:.4f}")
+
+    return metadata
 
 
 if __name__ == "__main__":

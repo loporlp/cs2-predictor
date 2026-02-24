@@ -72,9 +72,23 @@ def load_and_clean_data():
     return df_matches, tournament_info
 
 
-def build_feature_matrix():
-    """Build the feature matrix chronologically, preventing data leakage."""
+def build_feature_matrix(cutoff_date=None):
+    """Build the feature matrix chronologically, preventing data leakage.
+
+    Args:
+        cutoff_date: Optional YYYY-MM-DD string. Only matches strictly before
+                     this date are used for features and tracker state.
+    """
     df_matches, tournament_info = load_and_clean_data()
+
+    if cutoff_date is not None:
+        cutoff_ts = pd.Timestamp(cutoff_date)
+        before = len(df_matches)
+        df_matches = df_matches[df_matches["date"] < cutoff_ts].reset_index(drop=True)
+        logger.info(
+            f"Cutoff {cutoff_date}: {before - len(df_matches)} matches removed, "
+            f"{len(df_matches)} remaining (up to {df_matches['date'].max().date() if len(df_matches) else 'N/A'})"
+        )
 
     elo = EloRatingSystem()
     stats = TeamStatsTracker()
