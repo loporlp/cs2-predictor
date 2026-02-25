@@ -1,15 +1,16 @@
 # CS2 Predictor
 
-ML-based match outcome predictor for Counter-Strike 2. Collects historical match data from the Liquipedia API, engineers features from team performance history, and trains classification models to predict match winners with calibrated probabilities.
+ML-based match outcome predictor and Swiss bracket simulator for Counter-Strike 2. Collects historical match data from the Liquipedia API, engineers features from team performance history, trains classification models to predict match winners, and runs Monte Carlo simulations of CS2 Major-style Swiss brackets to generate pick'em recommendations.
 
 ## Overview
 
-The system is an end-to-end pipeline with four stages:
+The system is an end-to-end pipeline with five stages:
 
-1. **Data collection** - Fetches tournament and match data from the Liquipedia API (v3), covering all CS2 matches since the game's release (October 2023).
-2. **Feature engineering** - Processes matches chronologically to compute 26 features per matchup: Elo ratings, rolling win rates, recent form, win/loss streaks, head-to-head records, tier-specific performance, and tournament context.
-3. **Model training** - Trains four classifiers (logistic regression, random forest, XGBoost, gradient boosting) using a time-based train/test split and selects the best by log loss.
-4. **Prediction** - Constructs a live feature vector from current team stats and outputs calibrated win probabilities.
+1. **Data collection** — Fetches tournament and match data from the Liquipedia API (v3), covering all CS2 matches since the game's release.
+2. **Feature engineering** — Processes matches chronologically to compute 26 features per matchup: Elo ratings, rolling win rates, recent form, win/loss streaks, head-to-head records, tier-specific performance, and tournament context.
+3. **Model training** — Trains four classifiers (logistic regression, random forest, XGBoost, gradient boosting) using a time-based train/test split and selects the best by log loss.
+4. **Prediction** — Constructs a live feature vector from current team stats and outputs calibrated win probabilities.
+5. **Swiss simulation** — Runs Monte Carlo simulations of a 16-team CS2 Major Swiss bracket to produce pick'em recommendations (best 3-0, advancing teams, best 0-3).
 
 ## Project Structure
 
@@ -17,7 +18,11 @@ The system is an end-to-end pipeline with four stages:
 cs2-predictor/
 ├── src/
 │   ├── config.py                           # API keys, rate limits, timeouts
-│   ├── predict.py                          # Prediction CLI
+│   ├── predict.py                          # Match prediction CLI
+│   ├── pickem.py                           # Swiss bracket pick'em simulator CLI
+│   ├── ui.py                               # Web UI server (Flask)
+│   ├── templates/
+│   │   └── index.html                      # Web UI frontend
 │   ├── fetch/
 │   │   ├── tournaments.py                  # Liquipedia tournament API client
 │   │   └── matches.py                      # Liquipedia match API client
@@ -56,7 +61,7 @@ cs2-predictor/
 │       ├── scaler.joblib                   # StandardScaler for logistic regression
 │       ├── elo_ratings.json                # Final Elo ratings for all teams
 │       ├── team_stats.json                 # Full team stats history
-│       ├── training_metadata.json          # Train/test split info, metrics
+│       ├── training_metadata.json          # Train/test split info, metrics, cutoff date
 │       ├── feature_importances.json        # Feature importances per model
 │       └── calibration_curve.png           # Calibration plot for best model
 └── .gitignore
@@ -74,7 +79,7 @@ cs2-predictor/
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install pandas numpy scikit-learn xgboost joblib matplotlib requests python-dotenv
+pip install pandas numpy scikit-learn xgboost joblib matplotlib requests python-dotenv flask
 ```
 
 ### Configuration
@@ -115,7 +120,7 @@ python -m src.predict --team1 "Natus Vincere" --team2 "FaZe Clan"
 
 ### Step Details
 
-**Fetch tournaments** - Queries the Liquipedia tournament API for all CS2 events. Saves to `data/processed/cs2_tournaments.csv`.
+**Fetch tournaments** — Queries the Liquipedia tournament API for all CS2 events. Saves to `data/processed/cs2_tournaments.csv`.
 
 ```bash
 python -m src.pipelines.build_tournaments
@@ -123,7 +128,7 @@ python -m src.pipelines.build_tournaments
     --end-date YYYY-MM-DD     # default: today
 ```
 
-**Fetch matches** - Iterates through each tournament and fetches all match results. Saves raw data with checkpoints after each tournament, so interrupted runs can resume. Outputs `data/processed/cs2_matches.csv`.
+**Fetch matches** — Iterates through each tournament and fetches all match results. Saves raw data with checkpoints after each tournament, so interrupted runs can resume. Outputs `data/processed/cs2_matches.csv`.
 
 ```bash
 python -m src.pipelines.build_matches
@@ -131,7 +136,7 @@ python -m src.pipelines.build_matches
     --from-date YYYY-MM-DD     # override start date for incremental
 ```
 
-**Deduplicate matches** - Creates a clean copy of match data with duplicate match IDs removed. The raw file is preserved. Outputs `data/processed/cs2_matches_deduplicated.csv`.
+**Deduplicate matches** — Creates a clean copy of match data with duplicate match IDs removed. The raw file is preserved. Outputs `data/processed/cs2_matches_deduplicated.csv`.
 
 ```bash
 python -m src.pipelines.deduplicate_matches
@@ -140,17 +145,22 @@ python -m src.pipelines.deduplicate_matches
     --strategy first|latest    # keep first occurrence or most recent (default: first)
 ```
 
-**Build features** - Processes matches chronologically, computing features using only data available before each match (no leakage). Teams with fewer than 5 prior matches are excluded. Saves the feature matrix and serialized Elo ratings and team stats.
+**Build features** — Processes matches chronologically, computing features using only data available before each match (no leakage). Teams with fewer than 5 prior matches are excluded. Saves the feature matrix and serialized Elo ratings and team stats.
 
 ```bash
 python -m src.features.build_features
+    --cutoff-date YYYY-MM-DD   # optional: only use matches before this date
 ```
 
-**Train models** - Trains all four models, evaluates on the test set, selects the best by log loss, and saves all artifacts to `data/models/`.
+The `--cutoff-date` flag is useful for backtesting — it ensures both the feature matrix and the saved Elo/stats artifacts reflect the state of the world at that date.
+
+**Train models** — Trains all four models on the feature matrix, evaluates on a held-out test set, selects the best by log loss, and saves all artifacts to `data/models/`.
 
 ```bash
 python -m src.model.train
 ```
+
+---
 
 ## Making Predictions
 
@@ -178,14 +188,110 @@ python -m src.predict --list-teams
 |------|-------------|---------|
 | `--team1` | First team name (exact Liquipedia name) | required |
 | `--team2` | Second team name (exact Liquipedia name) | required |
-| `--tier` | Tournament tier 1-4 | 2 |
+| `--tier` | Tournament tier 1–4 | 2 |
 | `--prizepool` | Prize pool in USD | 50000 |
 | `--type` | `Online`, `Offline`, or `Online/Offline` | Offline |
 | `--model` | `best`, `logistic_regression`, `random_forest`, `xgboost`, `gradient_boosting` | best |
 | `--json` | Output as JSON | off |
 | `--list-teams` | Show top teams ranked by Elo | off |
 
-Team names must match Liquipedia exactly (e.g., "Natus Vincere" not "NaVi", "FaZe Clan" not "FaZe"). Use `--list-teams` to see available team names.
+Team names must match Liquipedia exactly (e.g. `"Natus Vincere"` not `"NaVi"`, `"FaZe Clan"` not `"FaZe"`). Use `--list-teams` to see available names.
+
+---
+
+## Swiss Bracket Pick'em Simulator
+
+`src/pickem.py` simulates a CS2 Major-style Swiss bracket using Monte Carlo methods. It pre-computes pairwise win probabilities for all teams in the lineup (120 model calls for 16 teams), then runs N simulations of the full bracket to estimate each team's probability of reaching every possible final record (3-0, 3-1, 3-2, 2-3, 1-3, 0-3).
+
+### Swiss Format
+
+- **Round 1**: top half vs bottom half by seed (seed 1 vs 9, 2 vs 10, etc.)
+- **Subsequent rounds**: within each W-L bucket, teams are sorted by seed and paired head-to-tail (best vs worst); rematches are avoided by shifting the opponent pointer
+- **Odd-sized buckets**: the worst-seeded team is carried down to the next bucket
+- **Termination**: 3 wins → advance, 3 losses → eliminated
+
+### CLI
+
+```bash
+python -m src.pickem \
+  --lineup "1:FaZe Clan" "2:Natus Vincere" "3:Team Spirit" "4:G2 Esports" \
+           "5:MOUZ" "6:Team Vitality" "7:Heroic" "8:FURIA" \
+           "9:ENCE" "10:Liquid" "11:BIG" "12:Cloud9" \
+           "13:Complexity" "14:GamerLegion" "15:Fluxo" "16:9z Team" \
+  --tier 1 --prizepool 1250000 --simulations 10000
+```
+
+Lineup entries are in `SEED:Team Name` format. Seed order determines round 1 pairings — use the actual tournament seedings for accurate results.
+
+### Pick'em Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--lineup` | Space-separated list of `SEED:Name` entries | required |
+| `--tier` | Tournament tier 1–4 | 1 |
+| `--prizepool` | Prize pool in USD | 1250000 |
+| `--type` | `Online`, `Offline`, or `Online/Offline` | Offline |
+| `--simulations` | Number of Monte Carlo simulations | 10000 |
+| `--model` | Model to use for win probabilities | best |
+| `--seed` | Random seed for reproducibility | off |
+| `--json` | Output raw JSON instead of a formatted table | off |
+
+### Output
+
+The simulator prints a results table with per-team probabilities for every final record, then a pick'em recommendations section:
+
+```
+  PICK'EM RECOMMENDATIONS
+  Best 3-0 pick  : Team Vitality  (48.7% chance)
+  Best 0-3 pick  : Liquid  (61.6% chance)
+  Top teams to advance: Team Vitality (99.3%), Team Spirit (97.1%), FURIA (97.0%)
+  Most likely eliminated: Liquid (99.3%), Heroic (98.6%), Cloud9 (95.3%)
+```
+
+---
+
+## Web UI
+
+`src/ui.py` is a local Flask server that provides a browser-based interface for the pick'em simulator, with team autocomplete, model selection, and in-browser retraining.
+
+### Starting the UI
+
+```bash
+python -m src.ui
+```
+
+The server starts at `http://127.0.0.1:5000` and opens in your browser automatically. The model is pre-loaded on startup.
+
+### Features
+
+**Pick'em setup**
+- Select tournament tier, prize pool, type, and simulation count
+- Choose which model to use — a pill selector shows all five options with their log loss and accuracy pulled from training metadata; the `best` option shows which model it aliases
+- 16 seed slots with live autocomplete against all ~5,700 known teams; results are sorted by Elo rating and show match count; duplicate teams are prevented
+- Add/remove slots for non-16-team formats; the Run button is disabled until all slots are filled with an even team count
+
+**Results**
+- Pick'em recommendations displayed as three rows: 2 best 3-0 picks, 6 best advancing picks (excluding the 3-0 picks), 2 best 0-3 picks
+- Full results table sorted by advance probability, with columns for every record outcome (3-0 through 0-3) and average W-L
+
+**Retrain model**
+- Collapsible section in the settings panel
+- Optional cutoff date — only matches strictly before that date are used to rebuild the feature matrix and retrain; Elo and team stats artifacts will reflect the world at that date
+- Retraining runs in a background thread; a live scrolling log streams progress updates from the training pipeline
+- On completion, shows a metrics summary (best model, accuracy, AUC, log loss, train/test sizes, test period) and refreshes the model selector and team autocomplete with the new data
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Serves the web UI |
+| `GET` | `/api/teams` | All teams sorted by Elo (name, elo, matches) |
+| `GET` | `/api/model-info` | Current training metadata and per-model metrics |
+| `POST` | `/api/simulate` | Run a Swiss simulation; accepts lineup, settings, and `model_name` |
+| `POST` | `/api/retrain` | Start a background retrain job; accepts optional `cutoff_date` |
+| `GET` | `/api/retrain/status` | Poll retraining progress (`idle`, `running`, `done`, `error`) |
+
+---
 
 ## How It Works
 
@@ -212,12 +318,26 @@ Each match is processed chronologically. Features are extracted using only data 
 
 Four classifiers are trained on an 80/20 time-based split (earlier matches for training, later for testing):
 
-- **Logistic Regression** - StandardScaler preprocessing, max 1000 iterations
-- **Random Forest** - 200 trees, max depth 10, min 20 samples per leaf
-- **XGBoost** - 200 estimators, max depth 6, learning rate 0.1
-- **Gradient Boosting** - 200 estimators, max depth 5, learning rate 0.1
+- **Logistic Regression** — StandardScaler preprocessing, max 1000 iterations
+- **Random Forest** — 200 trees, max depth 10, min 20 samples per leaf
+- **XGBoost** — 200 estimators, max depth 6, learning rate 0.1
+- **Gradient Boosting** — 200 estimators, max depth 5, learning rate 0.1
 
 Models are evaluated on accuracy, log loss, ROC AUC, and Brier score. The best model is selected by log loss (measures probability calibration quality). A calibration curve is generated for visual inspection.
+
+Current best model: **logistic regression** (~0.62 log loss, ~65% accuracy, ~0.70 AUC). Logistic regression outperforms tree models on this dataset, likely because the engineered features are already well-suited to a linear boundary.
+
+### Swiss Simulation
+
+At simulation time, `run_pickem` loads the model fresh from disk, pre-computes win probabilities for every pair of teams in the lineup (120 calls for 16 teams), then runs N Monte Carlo iterations. Each iteration:
+
+1. Deep-copies the team roster
+2. Generates round 1 matchups (top-half vs bottom-half seeding)
+3. For each match, draws a Bernoulli sample from the pre-computed probability
+4. Updates wins, losses, and opponent history in place
+5. Repeats, grouping active teams into W-L buckets and pairing head-to-tail, until all 16 teams reach a terminal record (3 wins or 3 losses)
+
+Results are aggregated across all simulations to produce per-team percentages for each final record.
 
 ### Prediction
 
@@ -226,7 +346,7 @@ At prediction time, the system:
 1. Loads the saved Elo ratings, team stats, model, and scaler
 2. Constructs a feature vector from the current state of both teams
 3. Runs the feature vector through the model to get class probabilities
-4. Outputs win probabilities, predicted winner, confidence, and supporting context (Elo, match counts, H2H record)
+4. Outputs win probabilities, predicted winner, confidence, and supporting context
 
 Teams with no match history get default ratings (Elo 1500, 50% win rates). The system warns when a team has limited data.
 
@@ -262,6 +382,11 @@ Liquipedia API
      │                      + data/models/feature_importances.json
      ▼                      + data/models/calibration_curve.png
 ┌─────────────────────┐
-│     predict          │ ──► win probabilities + context
+│  predict / pickem    │ ──► win probabilities / Swiss simulation results
+└─────────────────────┘
+     ▲
+     │
+┌─────────────────────┐
+│     web UI           │ ──► http://127.0.0.1:5000
 └─────────────────────┘
 ```

@@ -4,14 +4,13 @@ import os
 import numpy as np
 import pandas as pd
 
+from src.db.database import load_matches_df, load_tournaments_df
 from src.features.elo import EloRatingSystem
 from src.features.team_stats import TeamStatsTracker
 from src.utils.logger import get_logger
 
 logger = get_logger("cs2predictor.features.build")
 
-MATCHES_PATH = "data/processed/cs2_matches_deduplicated.csv"
-TOURNAMENTS_PATH = "data/processed/cs2_tournaments.csv"
 OUTPUT_PATH = "data/processed/feature_matrix.csv"
 ELO_SAVE_PATH = "data/models/elo_ratings.json"
 STATS_SAVE_PATH = "data/models/team_stats.json"
@@ -22,8 +21,8 @@ MIN_MATCHES = 5  # Minimum prior matches before a team enters training data
 def load_and_clean_data():
     """Load match and tournament data, apply cleaning filters."""
     logger.info("Loading data...")
-    df_matches = pd.read_csv(MATCHES_PATH)
-    df_tournaments = pd.read_csv(TOURNAMENTS_PATH)
+    df_matches = load_matches_df()
+    df_tournaments = load_tournaments_df()
     logger.info(f"Loaded {len(df_matches)} matches, {len(df_tournaments)} tournaments")
 
     # Build tournament lookup: pagename -> {tier, prizepool, type}
