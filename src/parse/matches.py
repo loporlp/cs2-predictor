@@ -35,12 +35,11 @@ def normalize_match(m):
         if match_id is None:
             logger.error(f"Match has no valid ID field. Available keys: {list(m.keys())}")
             return None
-
         return {
             "match_id": match_id,
             "tournament_pagename": m.get("parent"),
             "date": m.get("date"),
-            "bestof": m.get("extradata", {}).get("bestof") if m.get("extradata") else None,
+            "bestof": m.get("bestof"),
             "team1_id": team1.get("id"),
             "team1_name": team1.get("name"),
             "team1_score": team1.get("score"),

@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CS2 Pick'em Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .dropdown-item:hover { background: #f1f5f9; }
+    .dropdown-item.highlighted { background: #e2e8f0; }
+    .team-row.filled input { border-color: #3b82f6; }
+    #retrain-log { font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans text-slate-800">
+
+  <!-- Header -->
+  <header class="bg-slate-900 text-white py-4 px-6 shadow-lg">
+    <div class="max-w-5xl mx-auto flex items-center gap-3">
+      <span class="text-2xl">🎯</span>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">CS2 Pick'em Simulator</h1>
+        <p class="text-slate-400 text-sm">Monte Carlo Swiss bracket simulation</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6 space-y-5">
+
+    <!-- ── Tournament Settings ───────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Tournament Settings</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+
+        <div class="col-span-2 sm:col-span-4">
+          <label class="block text-xs font-medium text-slate-600 mb-1">Model</label>
+          <div class="flex flex-wrap gap-2" id="model-selector">
+            <!-- populated by JS -->
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Tier</label>
+          <select id="tier" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="1" selected>1 — Major</option>
+            <option value="2">2 — Challenger</option>
+            <option value="3">3 — Open</option>
+            <option value="4">4 — Amateur</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Prize Pool (USD)</label>
+          <input id="prizepool" type="number" value="1250000" min="0"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Type</label>
+          <select id="ttype" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="Offline" selected>Offline</option>
+            <option value="Online">Online</option>
+            <option value="Online/Offline">Online/Offline</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Simulations</label>
+          <input id="simulations" type="number" value="10000" min="100" max="100000" step="1000"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Retrain Model ─────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <!-- Collapsible header -->
+      <button onclick="toggleRetrain()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          🔧 Retrain Model
+          <span id="retrain-badge" class="hidden text-xs font-normal px-2 py-0.5 rounded-full"></span>
+        </span>
+        <svg id="retrain-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- Collapsible body -->
+      <div id="retrain-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
+
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Rebuilds the feature matrix and retrains all models using only matches
+          <strong>before</strong> the selected date. Leave blank to use all available data.
+          This takes a few minutes.
+        </p>
+
+        <div class="flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Cutoff date (optional)</label>
+            <input id="cutoff-date" type="date"
+              class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <button id="retrain-btn" onclick="startRetrain()"
+            class="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-300 disabled:cursor-not-allowed
+                   text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+            Start Retraining
+          </button>
+        </div>
+
+        <!-- Status + progress -->
+        <div id="retrain-status" class="hidden space-y-3">
+          <div class="flex items-center gap-2 text-sm">
+            <span id="retrain-spinner" class="hidden animate-spin">⚙️</span>
+            <span id="retrain-status-text" class="font-medium text-slate-700"></span>
+          </div>
+
+          <!-- Log output -->
+          <div id="retrain-log-wrap"
+            class="bg-slate-900 rounded-lg p-3 h-48 overflow-y-auto text-xs text-slate-300 space-y-0.5"
+            id="retrain-log-wrap">
+            <div id="retrain-log"></div>
+          </div>
+
+          <!-- Metrics (shown on success) -->
+          <div id="retrain-metrics" class="hidden">
+            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Training Results</h3>
+            <div id="retrain-metrics-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Lineup Builder ────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider">Lineup
+          <span id="fill-counter" class="ml-2 text-blue-500 font-bold normal-case text-base">0/16</span>
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="clearAll()"
+            class="text-xs text-slate-500 hover:text-red-500 border border-slate-300 rounded-lg px-3 py-1.5 transition-colors">
+            Clear all
+          </button>
+          <button onclick="addSlot()"
+            class="text-xs text-white bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-1.5 transition-colors">
+            + Add slot
+          </button>
+          <button onclick="removeSlot()"
+            class="text-xs text-slate-500 hover:text-red-500 border border-slate-300 rounded-lg px-3 py-1.5 transition-colors">
+            − Remove slot
+          </button>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-400 mb-3">Type a team name in any slot — results are sorted by Elo rating.</p>
+
+      <div id="lineup-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+    </section>
+
+    <!-- ── Run Button ────────────────────────────────────────────────── -->
+    <div class="flex justify-end">
+      <button id="run-btn" onclick="runSimulation()"
+        class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed
+               text-white font-semibold px-8 py-3 rounded-xl shadow transition-colors text-sm">
+        Run Simulation
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden text-center py-8 text-slate-500">
+      <div class="inline-block animate-spin text-3xl mb-2">⚙️</div>
+      <p class="text-sm">Running simulations…</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm"></div>
+
+    <!-- ── Results ───────────────────────────────────────────────────── -->
+    <section id="results" class="hidden space-y-5">
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Pick'em Recommendations</h2>
+        <div id="reco-cards" class="space-y-4"></div>
+      </div>
+
+      <div id="warnings-box" class="hidden bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-xl p-4 text-sm space-y-1"></div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100">
+          <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider">Results</h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                <th class="px-4 py-3 text-left">Team</th>
+                <th class="px-3 py-3 text-center">Seed</th>
+                <th class="px-3 py-3 text-center text-green-700">Advance%</th>
+                <th class="px-3 py-3 text-center text-red-600">Elim%</th>
+                <th class="px-3 py-3 text-center">3-0%</th>
+                <th class="px-3 py-3 text-center">3-1%</th>
+                <th class="px-3 py-3 text-center">3-2%</th>
+                <th class="px-3 py-3 text-center">2-3%</th>
+                <th class="px-3 py-3 text-center">1-3%</th>
+                <th class="px-3 py-3 text-center">0-3%</th>
+                <th class="px-3 py-3 text-center">Avg W-L</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────
+    let allTeams = [];
+    let slotCount = 16;
+    let dropdownTeams = [];
+    let dropdownIdx = -1;
+    let retrainPoll = null;
+
+    // ── Boot ───────────────────────────────────────────────────────────────
+    async function init() {
+      renderSlots();
+      document.getElementById('cutoff-date').max = new Date().toISOString().slice(0, 10);
+      try {
+        const [teamsRes, modelRes] = await Promise.all([
+          fetch('/api/teams'),
+          fetch('/api/model-info'),
+        ]);
+        allTeams = await teamsRes.json();
+        const modelData = await modelRes.json();
+        if (modelData.ok) renderModelSelector(modelData.metadata);
+      } catch (e) {
+        showError('Could not load data. Is the server running?');
+      }
+    }
+
+    // ── Model selector ─────────────────────────────────────────────────────
+    const MODEL_NAMES = ['best', 'logistic_regression', 'random_forest', 'xgboost', 'gradient_boosting'];
+    let selectedModel = 'best';
+
+    function renderModelSelector(meta) {
+      const bestModel = meta?.best_model;
+      const results   = meta?.results ?? {};
+      const container = document.getElementById('model-selector');
+
+      container.innerHTML = MODEL_NAMES.map(name => {
+        const isBest     = name === 'best';
+        const actualName = isBest ? bestModel : name;
+        const m          = results[actualName] ?? results[name] ?? null;
+        const logLoss    = m ? `LL ${m.log_loss.toFixed(3)}` : '';
+        const acc        = m ? `Acc ${(m.accuracy * 100).toFixed(1)}%` : '';
+        const label      = isBest
+          ? `best <span class="opacity-60 font-normal">(${actualName ?? '?'})</span>`
+          : name.replace(/_/g, ' ');
+        const sub        = m ? `${logLoss} · ${acc}` : 'no metrics';
+
+        return `<button
+          onclick="selectModel('${name}')"
+          data-model="${name}"
+          class="model-btn flex flex-col items-start border rounded-lg px-3 py-2 text-sm transition-colors
+                 ${name === selectedModel ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 hover:border-blue-400 text-slate-700'}">
+          <span class="font-medium">${label}</span>
+          <span class="text-xs ${name === selectedModel ? 'text-blue-100' : 'text-slate-400'}">${sub}</span>
+        </button>`;
+      }).join('');
+    }
+
+    function selectModel(name) {
+      selectedModel = name;
+      document.querySelectorAll('.model-btn').forEach(btn => {
+        const active = btn.dataset.model === name;
+        btn.className = btn.className
+          .replace(/bg-blue-600 border-blue-600 text-white|border-slate-300 hover:border-blue-400 text-slate-700/, '')
+          .trimEnd()
+          + (active
+            ? ' bg-blue-600 border-blue-600 text-white'
+            : ' border-slate-300 hover:border-blue-400 text-slate-700');
+        const sub = btn.querySelector('span:last-child');
+        if (sub) sub.className = `text-xs ${active ? 'text-blue-100' : 'text-slate-400'}`;
+      });
+    }
+
+    // ── Retrain ────────────────────────────────────────────────────────────
+    function toggleRetrain() {
+      const body = document.getElementById('retrain-body');
+      const chevron = document.getElementById('retrain-chevron');
+      body.classList.toggle('hidden');
+      chevron.classList.toggle('rotate-180');
+    }
+
+    async function startRetrain() {
+      const cutoff = document.getElementById('cutoff-date').value || null;
+      document.getElementById('retrain-btn').disabled = true;
+      document.getElementById('retrain-status').classList.remove('hidden');
+      document.getElementById('retrain-metrics').classList.add('hidden');
+      document.getElementById('retrain-log').innerHTML = '';
+      setRetrainStatus('running', 'Building features and training models…');
+
+      try {
+        const res = await fetch('/api/retrain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cutoff_date: cutoff }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+
+        // Start polling for status
+        retrainPoll = setInterval(pollRetrainStatus, 1000);
+      } catch (e) {
+        setRetrainStatus('error', 'Failed to start: ' + e.message);
+        document.getElementById('retrain-btn').disabled = false;
+      }
+    }
+
+    async function pollRetrainStatus() {
+      try {
+        const res = await fetch('/api/retrain/status');
+        const data = await res.json();
+
+        // Update log
+        const logEl = document.getElementById('retrain-log');
+        const wrap = document.getElementById('retrain-log-wrap');
+        logEl.innerHTML = data.logs
+          .map(l => `<div class="${logColor(l)}">${escHtml(l)}</div>`)
+          .join('');
+        wrap.scrollTop = wrap.scrollHeight;
+
+        if (data.status === 'done') {
+          clearInterval(retrainPoll);
+          retrainPoll = null;
+          setRetrainStatus('done', 'Retraining complete. Model updated.');
+          renderRetrainMetrics(data.metrics);
+          document.getElementById('retrain-btn').disabled = false;
+          // Reload team list and model info with fresh data
+          const [r, mr] = await Promise.all([fetch('/api/teams'), fetch('/api/model-info')]);
+          allTeams = await r.json();
+          const md = await mr.json();
+          if (md.ok) renderModelSelector(md.metadata);
+          setBadge('✓ Updated', 'bg-green-100 text-green-700');
+        } else if (data.status === 'error') {
+          clearInterval(retrainPoll);
+          retrainPoll = null;
+          setRetrainStatus('error', 'Error: ' + (data.error || 'Unknown error'));
+          document.getElementById('retrain-btn').disabled = false;
+          setBadge('✗ Failed', 'bg-red-100 text-red-700');
+        }
+      } catch (e) {
+        // Network error — keep polling
+      }
+    }
+
+    function setRetrainStatus(status, msg) {
+      const spinner = document.getElementById('retrain-spinner');
+      const text = document.getElementById('retrain-status-text');
+      spinner.classList.toggle('hidden', status !== 'running');
+      text.textContent = msg;
+      text.className = 'font-medium ' + {
+        running: 'text-blue-600',
+        done:    'text-green-600',
+        error:   'text-red-600',
+      }[status];
+    }
+
+    function setBadge(label, cls) {
+      const badge = document.getElementById('retrain-badge');
+      badge.textContent = label;
+      badge.className = 'text-xs font-normal px-2 py-0.5 rounded-full ' + cls;
+      badge.classList.remove('hidden');
+    }
+
+    function logColor(line) {
+      if (line.startsWith('ERROR')) return 'text-red-400';
+      if (line.startsWith('WARNING')) return 'text-yellow-400';
+      return 'text-slate-300';
+    }
+
+    function renderRetrainMetrics(meta) {
+      if (!meta) return;
+      const grid = document.getElementById('retrain-metrics-grid');
+      const best = meta.best_model;
+      const m = meta.results?.[best];
+      if (!m) return;
+
+      const cutoffLabel = meta.cutoff_date ? `Cutoff: ${meta.cutoff_date}` : 'All data';
+
+      grid.innerHTML = [
+        metricCard('Best Model', best.replace(/_/g, ' ')),
+        metricCard('Accuracy', (m.accuracy * 100).toFixed(1) + '%'),
+        metricCard('AUC', m.roc_auc.toFixed(3)),
+        metricCard('Log Loss', m.log_loss.toFixed(4)),
+        metricCard('Train rows', meta.train_size?.toLocaleString() ?? '—'),
+        metricCard('Test rows', meta.test_size?.toLocaleString() ?? '—'),
+        metricCard('Test period', (meta.test_period?.[0] ?? '').slice(0, 10)),
+        metricCard('Cutoff', cutoffLabel),
+      ].join('');
+
+      document.getElementById('retrain-metrics').classList.remove('hidden');
+    }
+
+    function metricCard(label, value) {
+      return `<div class="bg-slate-50 rounded-lg p-3 border border-slate-200">
+        <div class="text-xs text-slate-500 mb-1">${label}</div>
+        <div class="font-semibold text-slate-800 text-sm">${escHtml(String(value))}</div>
+      </div>`;
+    }
+
+    // ── Slot rendering ─────────────────────────────────────────────────────
+    function renderSlots() {
+      const grid = document.getElementById('lineup-grid');
+      const existing = Array.from(grid.querySelectorAll('.team-row')).map(r => r.querySelector('input').value);
+      grid.innerHTML = '';
+      for (let i = 1; i <= slotCount; i++) {
+        const div = document.createElement('div');
+        div.innerHTML = slotHTML(i, existing[i - 1] || '');
+        grid.appendChild(div.firstElementChild);
+      }
+      updateCounter();
+    }
+
+    function slotHTML(seed, name) {
+      return `
+      <div class="team-row relative ${name ? 'filled' : ''}" data-seed="${seed}">
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold shrink-0">${seed}</span>
+          <div class="relative flex-1">
+            <input type="text" value="${escHtml(name)}" placeholder="Search team…"
+              autocomplete="off"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 pr-7"
+              oninput="onInput(this)" onfocus="onFocus(this)" onblur="onBlur(this)" onkeydown="onKey(event,this)" />
+            ${name ? `<button class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 text-xs" onclick="clearSlot(this)">✕</button>` : ''}
+          </div>
+        </div>
+        <div class="dropdown hidden absolute z-50 left-9 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm"></div>
+      </div>`;
+    }
+
+    function addSlot() {
+      slotCount = Math.min(slotCount + 1, 32);
+      const grid = document.getElementById('lineup-grid');
+      const div = document.createElement('div');
+      div.innerHTML = slotHTML(slotCount, '');
+      grid.appendChild(div.firstElementChild);
+      updateCounter();
+    }
+
+    function removeSlot() {
+      if (slotCount <= 2) return;
+      document.querySelectorAll('.team-row')[slotCount - 1].remove();
+      slotCount--;
+      updateCounter();
+    }
+
+    function clearAll() {
+      document.querySelectorAll('.team-row input').forEach(inp => {
+        inp.value = '';
+        inp.closest('.team-row').classList.remove('filled');
+        const btn = inp.closest('.team-row').querySelector('button');
+        if (btn) btn.remove();
+      });
+      updateCounter();
+    }
+
+    function clearSlot(btn) {
+      const row = btn.closest('.team-row');
+      row.querySelector('input').value = '';
+      row.classList.remove('filled');
+      btn.remove();
+      updateCounter();
+    }
+
+    function updateCounter() {
+      const filled = document.querySelectorAll('.team-row.filled').length;
+      const total = document.querySelectorAll('.team-row').length;
+      document.getElementById('fill-counter').textContent = `${filled}/${total}`;
+      document.getElementById('run-btn').disabled = filled < 2 || filled % 2 !== 0 || filled !== total;
+    }
+
+    // ── Autocomplete ───────────────────────────────────────────────────────
+    function onFocus(inp) { showDropdown(inp); }
+    function onBlur(inp)  { setTimeout(() => closeDropdown(inp), 150); }
+    function onInput(inp) { showDropdown(inp); }
+
+    function onKey(e, inp) {
+      const items = inp.closest('.team-row').querySelector('.dropdown').querySelectorAll('.dropdown-item');
+      if (e.key === 'ArrowDown') { e.preventDefault(); dropdownIdx = Math.min(dropdownIdx + 1, items.length - 1); highlightItem(items); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); dropdownIdx = Math.max(dropdownIdx - 1, 0); highlightItem(items); }
+      else if (e.key === 'Enter')   { e.preventDefault(); if (dropdownIdx >= 0 && items[dropdownIdx]) selectTeam(inp, dropdownTeams[dropdownIdx].name); }
+      else if (e.key === 'Escape')  { closeDropdown(inp); }
+    }
+
+    function highlightItem(items) {
+      items.forEach((el, i) => { el.classList.toggle('highlighted', i === dropdownIdx); if (i === dropdownIdx) el.scrollIntoView({ block: 'nearest' }); });
+    }
+
+    function showDropdown(inp) {
+      const query = inp.value.trim().toLowerCase();
+      const dd = inp.closest('.team-row').querySelector('.dropdown');
+      dropdownIdx = -1;
+
+      const usedNames = new Set(
+        Array.from(document.querySelectorAll('.team-row.filled input'))
+          .filter(i => i !== inp).map(i => i.value)
+      );
+
+      dropdownTeams = allTeams
+        .filter(t => !usedNames.has(t.name) && (!query || t.name.toLowerCase().includes(query)))
+        .slice(0, 20);
+
+      if (!dropdownTeams.length) { dd.classList.add('hidden'); return; }
+
+      dd.innerHTML = dropdownTeams.map((t, i) => `
+        <div class="dropdown-item px-3 py-2 cursor-pointer flex justify-between items-center gap-2"
+             onmousedown="selectTeam(document.activeElement, '${escHtml(t.name)}')" data-idx="${i}">
+          <span class="truncate font-medium">${highlight(t.name, query)}</span>
+          <span class="text-xs text-slate-400 shrink-0">${t.elo} ELO · ${t.matches}m</span>
+        </div>`).join('');
+
+      dd.classList.remove('hidden');
+    }
+
+    function closeDropdown(inp) {
+      inp.closest('.team-row').querySelector('.dropdown').classList.add('hidden');
+      dropdownTeams = []; dropdownIdx = -1;
+    }
+
+    function selectTeam(inp, name) {
+      inp.value = name;
+      const row = inp.closest('.team-row');
+      row.classList.add('filled');
+      let btn = row.querySelector('button');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.className = 'absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 text-xs';
+        btn.setAttribute('onclick', 'clearSlot(this)');
+        btn.textContent = '✕';
+        inp.parentElement.appendChild(btn);
+      }
+      closeDropdown(inp);
+      updateCounter();
+    }
+
+    // ── Simulation ─────────────────────────────────────────────────────────
+    async function runSimulation() {
+      hideError();
+      document.getElementById('results').classList.add('hidden');
+      document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('run-btn').disabled = true;
+
+      const lineup = Array.from(document.querySelectorAll('.team-row')).map((row, i) => ({
+        seed: i + 1,
+        name: row.querySelector('input').value.trim(),
+      })).filter(e => e.name);
+
+      try {
+        const res = await fetch('/api/simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lineup,
+            tier:          parseInt(document.getElementById('tier').value),
+            prizepool:     parseFloat(document.getElementById('prizepool').value),
+            t_type:        document.getElementById('ttype').value,
+            n_simulations: parseInt(document.getElementById('simulations').value),
+            model_name:    selectedModel,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        renderResults(data.result);
+      } catch (e) {
+        showError('Simulation failed: ' + e.message);
+      } finally {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('run-btn').disabled = false;
+        updateCounter();
+      }
+    }
+
+    // ── Results rendering ──────────────────────────────────────────────────
+    function renderResults(result) {
+      const teams = [...result.teams].sort((a, b) => b.advance_pct - a.advance_pct);
+
+      const wb = document.getElementById('warnings-box');
+      if (result.warnings?.length) {
+        wb.innerHTML = result.warnings.map(w => `<p>⚠️ ${escHtml(w)}</p>`).join('');
+        wb.classList.remove('hidden');
+      } else {
+        wb.classList.add('hidden');
+      }
+
+      const top30     = [...teams].sort((a, b) => b.record_3_0_pct - a.record_3_0_pct).slice(0, 2);
+      const top30Names = new Set(top30.map(t => t.name));
+      const topAdv    = teams.filter(t => !top30Names.has(t.name)).slice(0, 6); // top advancers excluding 3-0 picks
+      const top03     = [...teams].sort((a, b) => b.record_0_3_pct - a.record_0_3_pct).slice(0, 2);
+
+      document.getElementById('reco-cards').innerHTML = `
+        ${pickemRow('🏆', '3-0 Picks', top30,  t => t.record_3_0_pct + '% chance', 'border-yellow-300 bg-yellow-50 text-yellow-800')}
+        ${pickemRow('📈', 'Advancing (3-1 / 3-2)', topAdv, t => t.advance_pct + '% advance', 'border-green-200 bg-green-50 text-green-800')}
+        ${pickemRow('💀', '0-3 Picks', top03,  t => t.record_0_3_pct + '% chance', 'border-red-200 bg-red-50 text-red-800')}
+      `;
+
+      document.getElementById('results-tbody').innerHTML = teams.map((t, i) => {
+        const advCls  = t.advance_pct  >= 70 ? 'text-green-700 font-semibold' : t.advance_pct  >= 40 ? 'text-slate-700' : 'text-slate-400';
+        const elimCls = t.eliminate_pct >= 70 ? 'text-red-600 font-semibold'  : t.eliminate_pct >= 40 ? 'text-slate-700' : 'text-slate-400';
+        return `<tr class="${i % 2 ? 'bg-slate-50/50' : ''} hover:bg-blue-50/30 transition-colors">
+          <td class="px-4 py-2.5 font-medium">${escHtml(t.name)}</td>
+          <td class="px-3 py-2.5 text-center text-slate-500">${t.seed}</td>
+          <td class="px-3 py-2.5 text-center ${advCls}">${t.advance_pct}</td>
+          <td class="px-3 py-2.5 text-center ${elimCls}">${t.eliminate_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_0_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_1_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-600">${t.record_3_2_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_2_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_1_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-400">${t.record_0_3_pct}</td>
+          <td class="px-3 py-2.5 text-center text-slate-500 text-xs">${t.avg_wins.toFixed(2)}-${t.avg_losses.toFixed(2)}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('results').classList.remove('hidden');
+      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function pickemRow(icon, label, teamList, subFn, cls) {
+      const cards = teamList.map(t => `
+        <div class="flex-1 min-w-0 border rounded-xl p-3 ${cls} flex flex-col gap-0.5">
+          <div class="font-semibold text-sm truncate">${escHtml(t.name)}</div>
+          <div class="text-xs opacity-70">${subFn(t)}</div>
+        </div>`).join('');
+      return `
+        <div class="flex items-center gap-3">
+          <div class="shrink-0 w-32 flex items-center gap-1.5 text-sm font-semibold text-slate-600">
+            <span>${icon}</span><span>${label}</span>
+          </div>
+          <div class="flex flex-1 gap-2">${cards}</div>
+        </div>`;
+    }
+
+    // ── Utilities ──────────────────────────────────────────────────────────
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function highlight(name, query) {
+      if (!query) return escHtml(name);
+      const idx = name.toLowerCase().indexOf(query);
+      if (idx === -1) return escHtml(name);
+      return escHtml(name.slice(0, idx))
+        + `<mark class="bg-yellow-200 rounded">${escHtml(name.slice(idx, idx + query.length))}</mark>`
+        + escHtml(name.slice(idx + query.length));
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error-box');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+
+    function hideError() { document.getElementById('error-box').classList.add('hidden'); }
+
+    // ── Start ──────────────────────────────────────────────────────────────
+    init();
+  </script>
+</body>
+</html>

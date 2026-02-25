@@ -1,12 +1,10 @@
-import pandas as pd
+from src.db.database import initialize_db, upsert_tournaments
 from src.fetch.tournaments import fetch_all_cs2_tournaments
 from src.parse.tournaments import normalize_tournament
 from src.utils.logger import get_pipeline_logger
 from src.utils.validators import is_valid_date
 
 logger = get_pipeline_logger()
-
-OUTPUT_PATH = "data/processed/cs2_tournaments.csv"
 
 
 def build_tournament_table(start_date="2023-10-15", end_date="2025-12-01"):
@@ -20,6 +18,8 @@ def build_tournament_table(start_date="2023-10-15", end_date="2025-12-01"):
     Returns:
         None
     """
+    initialize_db()
+
     logger.info("=" * 80)
     logger.info("Starting tournament pipeline")
     logger.info("=" * 80)
@@ -49,37 +49,30 @@ def build_tournament_table(start_date="2023-10-15", end_date="2025-12-01"):
     )
 
     if not parsed:
-        logger.error("No valid tournaments found, cannot create CSV")
+        logger.error("No valid tournaments found, cannot insert into DB")
         raise ValueError("No valid tournament data to process")
 
-    # Create DataFrame
-    df = pd.DataFrame(parsed)
-
-    # Validate and convert dates
+    # Validate dates before upsert
     invalid_start_dates = 0
     invalid_end_dates = 0
 
-    for idx, row in df.iterrows():
-        if row["startdate"] and not is_valid_date(str(row["startdate"])):
+    for r in parsed:
+        if r.get("startdate") and not is_valid_date(str(r["startdate"])):
             invalid_start_dates += 1
-            logger.warning(f"Invalid start date for tournament {row.get('pagename')}: {row['startdate']}")
+            logger.warning(f"Invalid start date for tournament {r.get('pagename')}: {r['startdate']}")
 
-        if row["enddate"] and not is_valid_date(str(row["enddate"])):
+        if r.get("enddate") and not is_valid_date(str(r["enddate"])):
             invalid_end_dates += 1
-            logger.warning(f"Invalid end date for tournament {row.get('pagename')}: {row['enddate']}")
+            logger.warning(f"Invalid end date for tournament {r.get('pagename')}: {r['enddate']}")
 
     if invalid_start_dates > 0:
-        logger.warning(f"Found {invalid_start_dates} tournaments with invalid start dates (will be coerced to NaT)")
+        logger.warning(f"Found {invalid_start_dates} tournaments with invalid start dates")
     if invalid_end_dates > 0:
-        logger.warning(f"Found {invalid_end_dates} tournaments with invalid end dates (will be coerced to NaT)")
+        logger.warning(f"Found {invalid_end_dates} tournaments with invalid end dates")
 
-    # Convert dates
-    df["startdate"] = pd.to_datetime(df["startdate"], errors='coerce')
-    df["enddate"] = pd.to_datetime(df["enddate"], errors='coerce')
-
-    # Save to CSV
-    df.to_csv(OUTPUT_PATH, index=False)
-    logger.info(f"Saved {len(df)} tournaments to {OUTPUT_PATH}")
+    # Upsert into DB
+    upsert_tournaments(parsed)
+    logger.info(f"Upserted {len(parsed)} tournaments into DB")
 
     # Summary statistics
     logger.info("=" * 80)
@@ -88,10 +81,10 @@ def build_tournament_table(start_date="2023-10-15", end_date="2025-12-01"):
     logger.info(f"Total raw tournaments fetched: {len(raw)}")
     logger.info(f"Valid tournaments parsed: {len(parsed)}")
     logger.info(f"Invalid tournaments filtered: {invalid_count}")
-    logger.info(f"Invalid start dates coerced: {invalid_start_dates}")
-    logger.info(f"Invalid end dates coerced: {invalid_end_dates}")
-    logger.info(f"Final tournament count: {len(df)}")
-    logger.info(f"Output file: {OUTPUT_PATH}")
+    logger.info(f"Invalid start dates: {invalid_start_dates}")
+    logger.info(f"Invalid end dates: {invalid_end_dates}")
+    logger.info(f"Final tournament count: {len(parsed)}")
+    logger.info("Output: data/processed/cs2_data.db (tournaments table)")
     logger.info("=" * 80)
 
 

@@ -1,14 +1,10 @@
 """
-Deduplication utility for match data.
+DEPRECATED — This script is no longer needed.
 
-This script creates a deduplicated version of the raw match data.
-The raw data in cs2_matches.csv is preserved - this creates a new file.
+Deduplication is now handled automatically by the SQLite pipeline via
+`INSERT OR REPLACE` on `match_id` PRIMARY KEY in `src/db/database.py`.
 
-Usage:
-    python -m src.pipelines.deduplicate_matches
-    python -m src.pipelines.deduplicate_matches --output data/processed/cs2_matches_clean.csv
-    python -m src.pipelines.deduplicate_matches --strategy latest  # Keep most recent duplicate
-    python -m src.pipelines.deduplicate_matches --strategy first   # Keep first occurrence (default)
+This file is retained for reference only.
 """
 
 import os
