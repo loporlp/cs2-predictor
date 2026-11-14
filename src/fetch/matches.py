@@ -96,7 +96,8 @@ def fetch_all_matches_for_tournament(tournament_pagename):
         tournament_pagename: Tournament identifier
 
     Returns:
-        List of all matches for the tournament (empty list if tournament fails)
+        List of all matches for the tournament (may be empty),
+        or None if the fetch failed after retries.
     """
     all_matches = []
     offset = 0
@@ -123,15 +124,14 @@ def fetch_all_matches_for_tournament(tournament_pagename):
         return all_matches
 
     except (APIException, NetworkException) as e:
-        # Log error but return empty list (don't let one tournament stop the pipeline)
+        # Return None so the caller can distinguish failure from an empty tournament
         logger.warning(
             f"Failed to fetch matches for tournament {tournament_pagename} after retries: {e}"
         )
-        return []
+        return None
 
     except Exception as e:
-        # Catch any unexpected errors
         logger.error(
             f"Unexpected error fetching matches for {tournament_pagename}: {e}"
         )
-        return []
+        return None

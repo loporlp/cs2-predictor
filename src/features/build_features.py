@@ -71,12 +71,19 @@ def load_and_clean_data():
     return df_matches, tournament_info
 
 
-def build_feature_matrix(cutoff_date=None):
+def build_feature_matrix(cutoff_date=None, train_start_date=None):
     """Build the feature matrix chronologically, preventing data leakage.
+
+    All matches up to cutoff_date are processed to build accurate Elo ratings
+    and team stats. Only rows on or after train_start_date are written to the
+    feature matrix CSV (the training window).
 
     Args:
         cutoff_date: Optional YYYY-MM-DD string. Only matches strictly before
                      this date are used for features and tracker state.
+        train_start_date: Optional YYYY-MM-DD string. Feature rows before this
+                          date are excluded from the saved matrix (but still
+                          used to build Elo/stats state).
     """
     df_matches, tournament_info = load_and_clean_data()
 
@@ -129,12 +136,21 @@ def build_feature_matrix(cutoff_date=None):
         stats.record_match(team1, team2, team1_win, date_str, tier=tier)
 
     logger.info(f"Skipped {skipped_min_matches} matches (teams with <{MIN_MATCHES} prior matches)")
-    logger.info(f"Feature matrix: {len(features_list)} rows")
+    logger.info(f"Feature matrix before window filter: {len(features_list)} rows")
 
     if not features_list:
         raise ValueError("No features generated. Check data quality.")
 
     df_features = pd.DataFrame(features_list)
+
+    if train_start_date is not None:
+        train_start_ts = pd.Timestamp(train_start_date)
+        before = len(df_features)
+        df_features = df_features[df_features["date"] >= train_start_ts].reset_index(drop=True)
+        logger.info(
+            f"Training window from {train_start_date}: {before - len(df_features)} rows excluded, "
+            f"{len(df_features)} rows kept"
+        )
 
     # Fill NaN defaults
     fill_defaults = {
@@ -170,7 +186,7 @@ def build_feature_matrix(cutoff_date=None):
     logger.info("=" * 60)
     logger.info(f"Total clean matches: {len(df_features) + skipped_min_matches}")
     logger.info(f"Skipped (min matches): {skipped_min_matches}")
-    logger.info(f"Feature matrix rows: {len(df_features)}")
+    logger.info(f"Feature matrix rows: {len(df_features)}{f' (window from {train_start_date})' if train_start_date else ''}")
     logger.info(f"Feature columns: {[c for c in df_features.columns if c not in ['team1_win', 'date', 'match_id']]}")
     logger.info(f"Target distribution: {df_features['team1_win'].value_counts().to_dict()}")
     logger.info(f"Teams tracked (Elo): {len(elo.ratings)}")

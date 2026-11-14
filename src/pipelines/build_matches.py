@@ -4,6 +4,8 @@ from src.db.database import (
     initialize_db,
     load_tournaments_df,
     get_processed_tournament_pagenames,
+    get_fetch_completed_pagenames,
+    mark_tournament_fetched,
     get_most_recent_match_date,
     upsert_matches,
     get_match_count,
@@ -11,7 +13,6 @@ from src.db.database import (
 from src.fetch.matches import fetch_all_matches_for_tournament
 from src.parse.matches import normalize_match
 from src.utils.logger import get_pipeline_logger
-from src.utils.validators import is_valid_date
 
 logger = get_pipeline_logger()
 
@@ -49,12 +50,14 @@ def build_match_table(incremental=False, tournament_start_date=None):
     df_tournaments = load_tournaments_df()
     logger.info(f"Loaded {len(df_tournaments)} tournaments from DB")
 
-    # Load processed pagenames to resume from checkpoint
-    processed_tournaments = get_processed_tournament_pagenames()
+    # Load completed-fetch pagenames to resume from checkpoint
+    fetch_completed = get_fetch_completed_pagenames()
+    processed_tournaments = fetch_completed
     if processed_tournaments:
-        logger.info(f"Found {len(processed_tournaments)} already-processed tournaments in DB")
+        logger.info(f"Found {len(processed_tournaments)} fully-fetched tournaments in fetch_log")
 
     # Handle incremental mode
+    partial_tournaments: set = set()
     if incremental:
         if tournament_start_date:
             cutoff_date = tournament_start_date
@@ -71,26 +74,39 @@ def build_match_table(incremental=False, tournament_start_date=None):
                 cutoff_date = None
 
         if incremental and cutoff_date:
-            # Filter tournaments to only those starting after cutoff
-            df_tournaments["startdate"] = pd.to_datetime(df_tournaments["startdate"], errors='coerce')
+            # Filter on enddate, not startdate: a long tournament that started
+            # before the window but ended (or is still running) after the cutoff
+            # may have matches we haven't fetched yet.
+            startdates = pd.to_datetime(df_tournaments["startdate"], errors="coerce")
+            enddates = pd.to_datetime(df_tournaments["enddate"], errors="coerce")
             original_count = len(df_tournaments)
-            df_tournaments = df_tournaments[df_tournaments["startdate"] >= cutoff_date]
-            logger.info(f"Filtered to {len(df_tournaments)} tournaments after {cutoff_date} (was {original_count})")
+            df_tournaments = df_tournaments[enddates.fillna(startdates) >= cutoff_date]
+            logger.info(f"Filtered to {len(df_tournaments)} tournaments ending on/after {cutoff_date} (was {original_count})")
 
             # In incremental mode, re-fetch all filtered tournaments (to catch updates)
             processed_tournaments = set()
 
+            # Also catch tournaments outside the window whose fetch was interrupted
+            all_with_matches = get_processed_tournament_pagenames()
+            partial_tournaments = all_with_matches - fetch_completed
+            if partial_tournaments:
+                logger.info(f"Found {len(partial_tournaments)} tournaments with partial match data outside window — will re-fetch")
+
     # Filter out any tournaments without a pagename
     all_tournaments_with_pagename = df_tournaments[df_tournaments["pagename"].notna()]["pagename"].tolist()
 
-    # Filter out already processed tournaments
+    # Filter out already processed tournaments, then add any partial ones not already in the list
     tournaments_to_process = [t for t in all_tournaments_with_pagename if t not in processed_tournaments]
+    extra_partial = [t for t in partial_tournaments if t not in set(tournaments_to_process) and t not in processed_tournaments]
+    if extra_partial:
+        logger.info(f"Appending {len(extra_partial)} partial tournaments to process list")
+        tournaments_to_process = extra_partial + tournaments_to_process
 
     tournaments_without_pagename = len(df_tournaments) - len(all_tournaments_with_pagename)
     if tournaments_without_pagename > 0:
         logger.warning(f"Skipping {tournaments_without_pagename} tournaments without pagenames")
 
-    already_processed_count = len(all_tournaments_with_pagename) - len(tournaments_to_process)
+    already_processed_count = len([t for t in all_tournaments_with_pagename if t in processed_tournaments])
     if already_processed_count > 0:
         logger.info(f"Skipping {already_processed_count} tournaments already processed (resuming from checkpoint)")
 
@@ -111,25 +127,28 @@ def build_match_table(incremental=False, tournament_start_date=None):
         logger.info(f"[{i}/{len(tournaments_to_process)}] Processing tournament: {pagename}")
         raw_matches = fetch_all_matches_for_tournament(pagename)
 
-        if raw_matches:
-            parsed = []
-            for m in raw_matches:
-                result = normalize_match(m)
-                if result is not None:
-                    parsed.append(result)
-                    new_matches_count += 1
-                else:
-                    invalid_matches += 1
-
-            # Upsert this tournament's matches immediately (checkpoint per tournament)
-            upsert_matches(parsed)
-            successful_tournaments += 1
-        else:
+        if raw_matches is None:
+            # Fetch failed — leave it out of fetch_log so the next run retries it
             failed_tournaments += 1
+            continue
+
+        parsed = []
+        for m in raw_matches:
+            result = normalize_match(m)
+            if result is not None:
+                parsed.append(result)
+                new_matches_count += 1
+            else:
+                invalid_matches += 1
+
+        # Upsert this tournament's matches immediately (checkpoint per tournament)
+        upsert_matches(parsed)
+        mark_tournament_fetched(pagename)
+        successful_tournaments += 1
 
     logger.info(f"Fetched {new_matches_count} new matches from {len(tournaments_to_process) - failed_tournaments} tournaments")
     if failed_tournaments > 0:
-        logger.warning(f"{failed_tournaments} tournaments returned no matches (may have failed or have no matches)")
+        logger.warning(f"{failed_tournaments} tournament fetches failed — they will be retried on the next run")
 
     total_in_db = get_match_count()
     if total_in_db == 0:
@@ -145,7 +164,7 @@ def build_match_table(incremental=False, tournament_start_date=None):
     logger.info(f"Tournaments already processed (from checkpoint): {already_processed_count}")
     logger.info(f"Tournaments processed this run: {len(tournaments_to_process)}")
     logger.info(f"Successful tournament fetches (total): {successful_tournaments}")
-    logger.info(f"Failed/empty tournament fetches: {failed_tournaments}")
+    logger.info(f"Failed tournament fetches (will retry next run): {failed_tournaments}")
     logger.info(f"New matches fetched this run: {new_matches_count}")
     logger.info(f"Invalid matches filtered: {invalid_matches}")
     logger.info(f"Total matches in DB: {total_in_db}")

@@ -93,8 +93,8 @@ class TeamStatsTracker:
             return None
         try:
             from datetime import datetime
-            last_dt = datetime.fromisoformat(str(last).replace(" ", "T").split("T")[0])
-            curr_dt = datetime.fromisoformat(str(current_date).replace(" ", "T").split("T")[0])
+            last_dt = datetime.fromisoformat(str(last)[:10])
+            curr_dt = datetime.fromisoformat(str(current_date)[:10])
             return (curr_dt - last_dt).days
         except (ValueError, TypeError):
             return None

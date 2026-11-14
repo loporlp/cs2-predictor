@@ -48,6 +48,20 @@ CREATE INDEX IF NOT EXISTS idx_matches_date       ON matches (date);
 CREATE INDEX IF NOT EXISTS idx_matches_tournament ON matches (tournament_pagename);
 CREATE INDEX IF NOT EXISTS idx_matches_team1      ON matches (team1_name);
 CREATE INDEX IF NOT EXISTS idx_matches_team2      ON matches (team2_name);
+
+CREATE TABLE IF NOT EXISTS fetch_log (
+    tournament_pagename TEXT PRIMARY KEY NOT NULL,
+    fetched_at          TEXT
+);
+"""
+
+# Migration: treat all tournaments that already have matches as fully fetched.
+# Runs once on first upgrade; INSERT OR IGNORE is a no-op on subsequent runs.
+_MIGRATION_SQL = """
+INSERT OR IGNORE INTO fetch_log (tournament_pagename, fetched_at)
+SELECT DISTINCT tournament_pagename, 'migrated'
+FROM matches
+WHERE tournament_pagename IS NOT NULL;
 """
 
 _TOURNAMENT_COLUMNS = ["pagename", "name", "startdate", "enddate", "tier", "prizepool", "type", "game"]
@@ -66,6 +80,7 @@ def initialize_db():
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.executescript(_SCHEMA_SQL)
+        conn.executescript(_MIGRATION_SQL)
         conn.commit()
     finally:
         conn.close()
@@ -144,6 +159,25 @@ def get_processed_tournament_pagenames() -> set:
         conn.close()
 
 
+def get_fetch_completed_pagenames() -> set:
+    """Return pagenames that have a completed fetch record in fetch_log."""
+    conn = get_connection()
+    try:
+        df = pd.read_sql_query("SELECT tournament_pagename FROM fetch_log", conn)
+        return set(df["tournament_pagename"].tolist())
+    finally:
+        conn.close()
+
+
+def mark_tournament_fetched(pagename: str):
+    """Record that a tournament's fetch completed successfully."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO fetch_log (tournament_pagename, fetched_at) VALUES (?, datetime('now'))",
+            (pagename,),
+        )
+
+
 def get_most_recent_match_date():
     """Return the most recent match date as a pd.Timestamp, or None."""
     conn = get_connection()
@@ -166,6 +200,40 @@ def load_tournaments_df() -> pd.DataFrame:
             "SELECT * FROM tournaments ORDER BY startdate ASC",
             conn,
         )
+    finally:
+        conn.close()
+
+
+def get_recent_matches(limit: int = 50, offset: int = 0, team: str = "") -> tuple[list[dict], int]:
+    """Return recent completed matches (winner_id 1 or 2), newest first, with optional team filter."""
+    conn = get_connection()
+    try:
+        if team:
+            pattern = f"%{team}%"
+            df = pd.read_sql_query(
+                """SELECT date, team1_name, team1_score, team2_name, team2_score,
+                          winner_id, bestof, tournament_pagename
+                   FROM matches
+                   WHERE (team1_name LIKE ? OR team2_name LIKE ?) AND winner_id IN (1, 2)
+                   ORDER BY date DESC LIMIT ? OFFSET ?""",
+                conn, params=(pattern, pattern, limit, offset),
+            )
+            total = int(pd.read_sql_query(
+                "SELECT COUNT(*) AS cnt FROM matches WHERE (team1_name LIKE ? OR team2_name LIKE ?) AND winner_id IN (1, 2)",
+                conn, params=(pattern, pattern),
+            )["cnt"].iloc[0])
+        else:
+            df = pd.read_sql_query(
+                """SELECT date, team1_name, team1_score, team2_name, team2_score,
+                          winner_id, bestof, tournament_pagename
+                   FROM matches WHERE winner_id IN (1, 2)
+                   ORDER BY date DESC LIMIT ? OFFSET ?""",
+                conn, params=(limit, offset),
+            )
+            total = int(pd.read_sql_query(
+                "SELECT COUNT(*) AS cnt FROM matches WHERE winner_id IN (1, 2)", conn
+            )["cnt"].iloc[0])
+        return df.to_dict(orient="records"), total
     finally:
         conn.close()
 

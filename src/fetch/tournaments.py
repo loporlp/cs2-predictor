@@ -1,5 +1,5 @@
 import requests
-from src.config import BASE_URLS, HEADERS, CONNECT_TIMEOUT, READ_TIMEOUT
+from src.config import BASE_URLS, HEADERS, CONNECT_TIMEOUT, READ_TIMEOUT, rate_limiter
 from src.utils.retry_handler import retry_with_backoff
 from src.utils.logger import get_fetch_logger
 from src.utils.exceptions import APIException, NetworkException
@@ -26,6 +26,8 @@ def fetch_tournaments(start_date, end_date, limit=1000, offset=0):
         APIException: For API-specific errors
         NetworkException: For network-related errors
     """
+    rate_limiter.wait_if_needed()
+
     conditions = (
         f"[[startdate::>{start_date}]] AND [[startdate::<{end_date}]]"
     )

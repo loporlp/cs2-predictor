@@ -9,7 +9,7 @@
     .dropdown-item:hover { background: #f1f5f9; }
     .dropdown-item.highlighted { background: #e2e8f0; }
     .team-row.filled input { border-color: #3b82f6; }
-    #retrain-log { font-family: ui-monospace, monospace; }
+    #retrain-log, #fetch-log { font-family: ui-monospace, monospace; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
@@ -73,6 +73,307 @@
       </div>
     </section>
 
+    <!-- ── Match Prediction ─────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <button onclick="togglePredict()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          🎯 Match Prediction
+          <span id="predict-badge" class="hidden text-xs font-normal px-2 py-0.5 rounded-full"></span>
+        </span>
+        <svg id="predict-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <div id="predict-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
+        <p class="text-xs text-slate-500">Predict the outcome of a single match using the trained model.</p>
+
+        <!-- Team inputs -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Team 1</label>
+            <div class="predict-row relative">
+              <input id="predict-team1" type="text" placeholder="Search team…" autocomplete="off"
+                class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                oninput="onInputPredict(this)" onfocus="onFocusPredict(this)" onblur="onBlurPredict(this)" onkeydown="onKeyPredict(event,this)" />
+              <div class="predict-dropdown hidden absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm"></div>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Team 2</label>
+            <div class="predict-row relative">
+              <input id="predict-team2" type="text" placeholder="Search team…" autocomplete="off"
+                class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                oninput="onInputPredict(this)" onfocus="onFocusPredict(this)" onblur="onBlurPredict(this)" onkeydown="onKeyPredict(event,this)" />
+              <div class="predict-dropdown hidden absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Tier</label>
+            <select id="predict-tier" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="1" selected>1 — Major</option>
+              <option value="2">2 — Challenger</option>
+              <option value="3">3 — Open</option>
+              <option value="4">4 — Amateur</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Prize Pool (USD)</label>
+            <input id="predict-prizepool" type="number" value="1250000" min="0"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Type</label>
+            <select id="predict-ttype" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="Offline" selected>Offline</option>
+              <option value="Online">Online</option>
+              <option value="Online/Offline">Online/Offline</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Model</label>
+            <select id="predict-model" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="best" selected>Best</option>
+              <option value="logistic_regression">Logistic Regression</option>
+              <option value="random_forest">Random Forest</option>
+              <option value="xgboost">XGBoost</option>
+              <option value="gradient_boosting">Gradient Boosting</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="predict-btn" onclick="runPredict()"
+          class="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed
+                 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+          Predict
+        </button>
+
+        <!-- Result card -->
+        <div id="predict-result" class="hidden space-y-3">
+          <!-- Probability bars -->
+          <div id="predict-bars" class="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3"></div>
+          <!-- Context grid -->
+          <div id="predict-ctx" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+          <!-- Warnings -->
+          <div id="predict-warnings" class="hidden bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-xl p-3 text-xs space-y-1"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Data Update ────────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <button onclick="toggleDataUpdate()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          📡 Data Update
+          <span id="fetch-badge" class="hidden text-xs font-normal px-2 py-0.5 rounded-full"></span>
+        </span>
+        <svg id="fetch-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <div id="fetch-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Fetch tournament and match data from the Liquipedia API and store it in the local database.
+          Run <strong>Fetch Tournaments</strong> first, then <strong>Fetch Matches</strong>.
+          These can take several minutes due to API rate limits.
+        </p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <!-- Tournaments -->
+          <div class="space-y-3">
+            <h3 class="text-xs font-semibold text-slate-600 uppercase tracking-wider">Tournaments</h3>
+            <div class="flex gap-3">
+              <div class="flex-1">
+                <label class="block text-xs font-medium text-slate-600 mb-1">Start date</label>
+                <input id="fetch-start-date" type="date" value="2023-10-15"
+                  class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
+              <div class="flex-1">
+                <label class="block text-xs font-medium text-slate-600 mb-1">End date</label>
+                <input id="fetch-end-date" type="date"
+                  class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
+            </div>
+            <button id="fetch-tournaments-btn" onclick="startFetchTournaments()"
+              class="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-300 disabled:cursor-not-allowed
+                     text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+              Fetch Tournaments
+            </button>
+          </div>
+
+          <!-- Matches -->
+          <div class="space-y-3">
+            <h3 class="text-xs font-semibold text-slate-600 uppercase tracking-wider">Matches</h3>
+            <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input id="fetch-incremental" type="checkbox" class="rounded" />
+              Incremental — only fetch recent tournaments
+            </label>
+            <button id="fetch-matches-btn" onclick="startFetchMatches()"
+              class="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-300 disabled:cursor-not-allowed
+                     text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+              Fetch Matches
+            </button>
+          </div>
+        </div>
+
+        <!-- Status + log -->
+        <div id="fetch-status" class="hidden space-y-3">
+          <div class="flex items-center gap-2 text-sm">
+            <span id="fetch-spinner" class="hidden animate-spin">⚙️</span>
+            <span id="fetch-status-text" class="font-medium text-slate-700"></span>
+          </div>
+          <div class="bg-slate-900 rounded-lg p-3 h-48 overflow-y-auto text-xs text-slate-300 space-y-0.5"
+               id="fetch-log-wrap">
+            <div id="fetch-log"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Recent Matches ───────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <button onclick="toggleRecentMatches()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          📋 Recent Matches
+          <span id="matches-badge" class="hidden text-xs font-normal px-2 py-0.5 rounded-full"></span>
+        </span>
+        <svg id="matches-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <div id="matches-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="flex-1 min-w-[180px]">
+            <label class="block text-xs font-medium text-slate-600 mb-1">Filter by team</label>
+            <input id="matches-team-filter" type="text" placeholder="Team name…" autocomplete="off"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              oninput="onMatchesFilter()" />
+          </div>
+        </div>
+
+        <div class="overflow-x-auto rounded-lg border border-slate-100">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                <th class="px-4 py-2 text-left">Date</th>
+                <th class="px-4 py-2 text-right">Team 1</th>
+                <th class="px-3 py-2 text-center">Score</th>
+                <th class="px-4 py-2 text-left">Team 2</th>
+                <th class="px-3 py-2 text-center">Format</th>
+                <th class="px-4 py-2 text-left">Tournament</th>
+              </tr>
+            </thead>
+            <tbody id="matches-tbody" class="divide-y divide-slate-100">
+              <tr><td colspan="6" class="px-4 py-6 text-center text-slate-400 text-sm">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center justify-between text-xs text-slate-500">
+          <span id="matches-pager-info"></span>
+          <div class="flex gap-2">
+            <button id="matches-prev-btn" onclick="matchesPrev()" disabled
+              class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              ← Prev
+            </button>
+            <button id="matches-next-btn" onclick="matchesNext()" disabled
+              class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              Next →
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Window Search ────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <button onclick="toggleWindowSearch()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          🔬 Training Window Search
+          <span id="exp-badge" class="hidden text-xs font-normal px-2 py-0.5 rounded-full"></span>
+        </span>
+        <svg id="exp-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <div id="exp-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Finds the optimal amount of historical data for training. Fixes the last <em>N</em> days as a
+          held-out test set, then trains on windows of 3, 6, 9, 12, 18, 24 months and all available data —
+          comparing log loss on the <strong>same</strong> test period for a fair result.
+          Requires the feature matrix to exist (run Retrain first if needed).
+        </p>
+
+        <div class="flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Test period (days)</label>
+            <input id="exp-test-days" type="number" value="90" min="30" max="365"
+              class="w-32 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <button id="exp-btn" onclick="startWindowSearch()"
+            class="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-300 disabled:cursor-not-allowed
+                   text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+            Run Experiment
+          </button>
+        </div>
+
+        <!-- Status + log -->
+        <div id="exp-status" class="hidden space-y-3">
+          <div class="flex items-center gap-2 text-sm">
+            <span id="exp-spinner" class="hidden animate-spin">⚙️</span>
+            <span id="exp-status-text" class="font-medium text-slate-700"></span>
+          </div>
+          <div class="bg-slate-900 rounded-lg p-3 h-48 overflow-y-auto text-xs text-slate-300 space-y-0.5"
+               id="exp-log-wrap">
+            <div id="exp-log"></div>
+          </div>
+        </div>
+
+        <!-- Results table -->
+        <div id="exp-results" class="hidden space-y-3">
+          <div class="flex items-center gap-3">
+            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Results</h3>
+            <span id="exp-test-period" class="text-xs text-slate-400"></span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                  <th class="px-4 py-2 text-left">Window</th>
+                  <th class="px-3 py-2 text-right">Train rows</th>
+                  <th class="px-3 py-2 text-left">Train from</th>
+                  <th class="px-3 py-2 text-right">Log Loss ↑ best</th>
+                  <th class="px-3 py-2 text-right">Accuracy</th>
+                  <th class="px-3 py-2 text-right">AUC</th>
+                  <th class="px-3 py-2 text-left">Best model</th>
+                </tr>
+              </thead>
+              <tbody id="exp-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+          <div id="exp-per-model" class="space-y-3"></div>
+        </div>
+
+      </div>
+    </section>
+
     <!-- ── Retrain Model ─────────────────────────────────────────────── -->
     <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
       <!-- Collapsible header -->
@@ -98,6 +399,19 @@
         </p>
 
         <div class="flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Training window</label>
+            <select id="train-window"
+              class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="">All available data</option>
+              <option value="3">Last 3 months</option>
+              <option value="6">Last 6 months</option>
+              <option value="9">Last 9 months</option>
+              <option value="12">Last 12 months</option>
+              <option value="18">Last 18 months</option>
+              <option value="24" selected>Last 24 months ★ optimal</option>
+            </select>
+          </div>
           <div>
             <label class="block text-xs font-medium text-slate-600 mb-1">Cutoff date (optional)</label>
             <input id="cutoff-date" type="date"
@@ -229,7 +543,10 @@
     // ── Boot ───────────────────────────────────────────────────────────────
     async function init() {
       renderSlots();
-      document.getElementById('cutoff-date').max = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      document.getElementById('cutoff-date').max = today;
+      document.getElementById('fetch-end-date').value = today;
+      document.getElementById('fetch-end-date').max = today;
       try {
         const [teamsRes, modelRes] = await Promise.all([
           fetch('/api/teams'),
@@ -299,6 +616,16 @@
 
     async function startRetrain() {
       const cutoff = document.getElementById('cutoff-date').value || null;
+      const windowMonths = document.getElementById('train-window').value;
+
+      // Compute train_start_date from window months relative to cutoff (or today)
+      let trainStartDate = null;
+      if (windowMonths) {
+        const base = cutoff ? new Date(cutoff) : new Date();
+        base.setMonth(base.getMonth() - parseInt(windowMonths));
+        trainStartDate = base.toISOString().slice(0, 10);
+      }
+
       document.getElementById('retrain-btn').disabled = true;
       document.getElementById('retrain-status').classList.remove('hidden');
       document.getElementById('retrain-metrics').classList.add('hidden');
@@ -309,7 +636,7 @@
         const res = await fetch('/api/retrain', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cutoff_date: cutoff }),
+          body: JSON.stringify({ cutoff_date: cutoff, train_start_date: trainStartDate }),
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error);
@@ -667,6 +994,442 @@
     }
 
     function hideError() { document.getElementById('error-box').classList.add('hidden'); }
+
+    // ── Match Prediction ───────────────────────────────────────────────────
+    let predictDropdownTeams = [];
+    let predictDropdownIdx = -1;
+
+    function togglePredict() {
+      document.getElementById('predict-body').classList.toggle('hidden');
+      document.getElementById('predict-chevron').classList.toggle('rotate-180');
+    }
+
+    function onFocusPredict(inp) { showPredictDropdown(inp); }
+    function onBlurPredict(inp)  { setTimeout(() => closePredictDropdown(inp), 150); }
+    function onInputPredict(inp) { showPredictDropdown(inp); }
+
+    function onKeyPredict(e, inp) {
+      const items = inp.closest('.predict-row').querySelector('.predict-dropdown').querySelectorAll('.dropdown-item');
+      if (e.key === 'ArrowDown')  { e.preventDefault(); predictDropdownIdx = Math.min(predictDropdownIdx + 1, items.length - 1); highlightPredictItem(items); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); predictDropdownIdx = Math.max(predictDropdownIdx - 1, 0); highlightPredictItem(items); }
+      else if (e.key === 'Enter')   { e.preventDefault(); if (predictDropdownIdx >= 0 && items[predictDropdownIdx]) selectPredictTeam(inp, predictDropdownTeams[predictDropdownIdx].name); }
+      else if (e.key === 'Escape')  { closePredictDropdown(inp); }
+    }
+
+    function highlightPredictItem(items) {
+      items.forEach((el, i) => { el.classList.toggle('highlighted', i === predictDropdownIdx); if (i === predictDropdownIdx) el.scrollIntoView({ block: 'nearest' }); });
+    }
+
+    function showPredictDropdown(inp) {
+      const query = inp.value.trim().toLowerCase();
+      const dd = inp.closest('.predict-row').querySelector('.predict-dropdown');
+      predictDropdownIdx = -1;
+
+      const otherId = inp.id === 'predict-team1' ? 'predict-team2' : 'predict-team1';
+      const otherVal = document.getElementById(otherId)?.value || '';
+
+      predictDropdownTeams = allTeams
+        .filter(t => t.name !== otherVal && (!query || t.name.toLowerCase().includes(query)))
+        .slice(0, 20);
+
+      if (!predictDropdownTeams.length) { dd.classList.add('hidden'); return; }
+
+      dd.innerHTML = predictDropdownTeams.map((t, i) => `
+        <div class="dropdown-item px-3 py-2 cursor-pointer flex justify-between items-center gap-2"
+             onmousedown="selectPredictTeam(document.getElementById('${inp.id}'), '${escHtml(t.name)}')" data-idx="${i}">
+          <span class="truncate font-medium">${highlight(t.name, query)}</span>
+          <span class="text-xs text-slate-400 shrink-0">${t.elo} ELO · ${t.matches}m</span>
+        </div>`).join('');
+
+      dd.classList.remove('hidden');
+    }
+
+    function closePredictDropdown(inp) {
+      inp.closest('.predict-row').querySelector('.predict-dropdown').classList.add('hidden');
+      predictDropdownTeams = []; predictDropdownIdx = -1;
+    }
+
+    function selectPredictTeam(inp, name) {
+      inp.value = name;
+      closePredictDropdown(inp);
+    }
+
+    async function runPredict() {
+      const team1 = document.getElementById('predict-team1').value.trim();
+      const team2 = document.getElementById('predict-team2').value.trim();
+      if (!team1 || !team2) { alert('Please enter both team names.'); return; }
+
+      const btn = document.getElementById('predict-btn');
+      btn.disabled = true;
+      btn.textContent = 'Predicting…';
+      document.getElementById('predict-result').classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            team1, team2,
+            tier:       parseInt(document.getElementById('predict-tier').value),
+            prizepool:  parseFloat(document.getElementById('predict-prizepool').value),
+            t_type:     document.getElementById('predict-ttype').value,
+            model_name: document.getElementById('predict-model').value,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        renderPredictResult(data.result);
+        const badge = document.getElementById('predict-badge');
+        badge.textContent = data.result.predicted_winner;
+        badge.className = 'text-xs font-normal px-2 py-0.5 rounded-full bg-blue-100 text-blue-700';
+        badge.classList.remove('hidden');
+      } catch (e) {
+        alert('Prediction failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Predict';
+      }
+    }
+
+    function renderPredictResult(r) {
+      const t1pct = r.team1_probability;
+      const t2pct = r.team2_probability;
+      const winnerCls = 'font-bold text-blue-700';
+
+      document.getElementById('predict-bars').innerHTML = `
+        <div class="flex items-center gap-3 text-sm">
+          <span class="w-40 text-right truncate ${r.predicted_winner === r.team1 ? winnerCls : 'text-slate-700'}">${escHtml(r.team1)}</span>
+          <div class="flex-1 flex h-5 rounded-full overflow-hidden bg-slate-200">
+            <div class="bg-blue-500 transition-all duration-500" style="width:${t1pct}%"></div>
+            <div class="bg-red-400 transition-all duration-500" style="width:${t2pct}%"></div>
+          </div>
+          <span class="w-40 truncate ${r.predicted_winner === r.team2 ? winnerCls : 'text-slate-700'}">${escHtml(r.team2)}</span>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-slate-500 mt-1">
+          <span class="w-40 text-right text-blue-600 font-semibold">${t1pct}%</span>
+          <div class="flex-1 text-center">
+            Winner: <strong class="text-slate-800">${escHtml(r.predicted_winner)}</strong>
+            <span class="ml-1 px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">${r.confidence}% conf.</span>
+          </div>
+          <span class="w-40 text-red-500 font-semibold">${t2pct}%</span>
+        </div>
+      `;
+
+      const ctx = r.context;
+      document.getElementById('predict-ctx').innerHTML = [
+        metricCard('Team 1 Elo', ctx.team1_elo),
+        metricCard('Team 2 Elo', ctx.team2_elo),
+        metricCard('Matches played', `${ctx.team1_matches} vs ${ctx.team2_matches}`),
+        metricCard('H2H (T1 win rate)', ctx.h2h_win_rate),
+        metricCard('Model', ctx.model.replace(/_/g, ' ')),
+      ].join('');
+
+      const wb = document.getElementById('predict-warnings');
+      if (r.warnings?.length) {
+        wb.innerHTML = r.warnings.map(w => `<p>⚠️ ${escHtml(w)}</p>`).join('');
+        wb.classList.remove('hidden');
+      } else {
+        wb.classList.add('hidden');
+      }
+
+      document.getElementById('predict-result').classList.remove('hidden');
+    }
+
+    // ── Data Update ────────────────────────────────────────────────────────
+    let fetchPoll = null;
+
+    function toggleDataUpdate() {
+      document.getElementById('fetch-body').classList.toggle('hidden');
+      document.getElementById('fetch-chevron').classList.toggle('rotate-180');
+    }
+
+    async function startFetch(operation, extraPayload) {
+      const btns = ['fetch-tournaments-btn', 'fetch-matches-btn'];
+      btns.forEach(id => { document.getElementById(id).disabled = true; });
+      document.getElementById('fetch-status').classList.remove('hidden');
+      document.getElementById('fetch-log').innerHTML = '';
+      setFetchStatus('running', `Fetching ${operation}…`);
+
+      try {
+        const res = await fetch('/api/fetch-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operation, ...extraPayload }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        fetchPoll = setInterval(pollFetchStatus, 2000);
+      } catch (e) {
+        setFetchStatus('error', 'Failed to start: ' + e.message);
+        btns.forEach(id => { document.getElementById(id).disabled = false; });
+      }
+    }
+
+    function startFetchTournaments() {
+      const startDate = document.getElementById('fetch-start-date').value || '2023-10-15';
+      const endDate   = document.getElementById('fetch-end-date').value || new Date().toISOString().slice(0, 10);
+      startFetch('tournaments', { start_date: startDate, end_date: endDate });
+    }
+
+    function startFetchMatches() {
+      const incremental = document.getElementById('fetch-incremental').checked;
+      startFetch('matches', { incremental });
+    }
+
+    async function pollFetchStatus() {
+      try {
+        const res = await fetch('/api/fetch-data/status');
+        const data = await res.json();
+
+        const logEl = document.getElementById('fetch-log');
+        const wrap  = document.getElementById('fetch-log-wrap');
+        logEl.innerHTML = data.logs
+          .map(l => `<div class="${logColor(l)}">${escHtml(l)}</div>`)
+          .join('');
+        wrap.scrollTop = wrap.scrollHeight;
+
+        if (data.status === 'done') {
+          clearInterval(fetchPoll); fetchPoll = null;
+          setFetchStatus('done', 'Done.');
+          setFetchBadge('✓ Done', 'bg-green-100 text-green-700');
+          ['fetch-tournaments-btn', 'fetch-matches-btn'].forEach(id => { document.getElementById(id).disabled = false; });
+        } else if (data.status === 'error') {
+          clearInterval(fetchPoll); fetchPoll = null;
+          setFetchStatus('error', 'Error: ' + (data.error || 'Unknown error'));
+          setFetchBadge('✗ Failed', 'bg-red-100 text-red-700');
+          ['fetch-tournaments-btn', 'fetch-matches-btn'].forEach(id => { document.getElementById(id).disabled = false; });
+        }
+      } catch (e) {
+        // Network error — keep polling
+      }
+    }
+
+    function setFetchStatus(status, msg) {
+      const spinner = document.getElementById('fetch-spinner');
+      const text    = document.getElementById('fetch-status-text');
+      spinner.classList.toggle('hidden', status !== 'running');
+      text.textContent = msg;
+      text.className = 'font-medium ' + { running: 'text-blue-600', done: 'text-green-600', error: 'text-red-600' }[status];
+    }
+
+    function setFetchBadge(label, cls) {
+      const badge = document.getElementById('fetch-badge');
+      badge.textContent = label;
+      badge.className = 'text-xs font-normal px-2 py-0.5 rounded-full ' + cls;
+      badge.classList.remove('hidden');
+    }
+
+    // ── Window Search ──────────────────────────────────────────────────────
+    let expPoll = null;
+
+    function toggleWindowSearch() {
+      document.getElementById('exp-body').classList.toggle('hidden');
+      document.getElementById('exp-chevron').classList.toggle('rotate-180');
+    }
+
+    async function startWindowSearch() {
+      const testDays = parseInt(document.getElementById('exp-test-days').value) || 90;
+      document.getElementById('exp-btn').disabled = true;
+      document.getElementById('exp-status').classList.remove('hidden');
+      document.getElementById('exp-results').classList.add('hidden');
+      document.getElementById('exp-log').innerHTML = '';
+      setExpStatus('running', 'Running experiment across all windows…');
+
+      try {
+        const res = await fetch('/api/window-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ test_days: testDays }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        expPoll = setInterval(pollExpStatus, 2000);
+      } catch (e) {
+        setExpStatus('error', 'Failed to start: ' + e.message);
+        document.getElementById('exp-btn').disabled = false;
+      }
+    }
+
+    async function pollExpStatus() {
+      try {
+        const res = await fetch('/api/window-search/status');
+        const data = await res.json();
+
+        const logEl = document.getElementById('exp-log');
+        const wrap  = document.getElementById('exp-log-wrap');
+        logEl.innerHTML = data.logs.map(l => `<div class="${logColor(l)}">${escHtml(l)}</div>`).join('');
+        wrap.scrollTop = wrap.scrollHeight;
+
+        if (data.status === 'done') {
+          clearInterval(expPoll); expPoll = null;
+          setExpStatus('done', 'Experiment complete.');
+          renderExpResults(data.result);
+          document.getElementById('exp-btn').disabled = false;
+          const opt = data.result?.optimal_window;
+          if (opt) {
+            const badge = document.getElementById('exp-badge');
+            badge.textContent = `Optimal: ${opt}`;
+            badge.className = 'text-xs font-normal px-2 py-0.5 rounded-full bg-blue-100 text-blue-700';
+            badge.classList.remove('hidden');
+          }
+        } else if (data.status === 'error') {
+          clearInterval(expPoll); expPoll = null;
+          setExpStatus('error', 'Error: ' + (data.error || 'Unknown'));
+          document.getElementById('exp-btn').disabled = false;
+        }
+      } catch (e) { /* keep polling */ }
+    }
+
+    function setExpStatus(status, msg) {
+      document.getElementById('exp-spinner').classList.toggle('hidden', status !== 'running');
+      const text = document.getElementById('exp-status-text');
+      text.textContent = msg;
+      text.className = 'font-medium ' + { running: 'text-blue-600', done: 'text-green-600', error: 'text-red-600' }[status];
+    }
+
+    function renderExpResults(result) {
+      document.getElementById('exp-test-period').textContent =
+        `Test set: ${result.test_period[0]} → ${result.test_period[1]} (${result.test_size} rows)`;
+
+      // Sort windows by log loss of best model
+      const rows = [...result.windows].sort(
+        (a, b) => a.models[a.best_model].log_loss - b.models[b.best_model].log_loss
+      );
+      const bestLoss = rows[0].models[rows[0].best_model].log_loss;
+
+      document.getElementById('exp-tbody').innerHTML = rows.map((r, i) => {
+        const best = r.models[r.best_model];
+        const isOptimal = i === 0;
+        const rowCls = isOptimal ? 'bg-blue-50' : (i % 2 ? 'bg-slate-50/50' : '');
+        return `<tr class="${rowCls}">
+          <td class="px-4 py-2.5 font-semibold ${isOptimal ? 'text-blue-700' : ''}">${r.window}${isOptimal ? ' ★' : ''}</td>
+          <td class="px-3 py-2.5 text-right text-slate-600">${r.train_rows.toLocaleString()}</td>
+          <td class="px-3 py-2.5 text-slate-500">${r.train_start}</td>
+          <td class="px-3 py-2.5 text-right font-mono ${isOptimal ? 'text-blue-700 font-bold' : ''}">${best.log_loss.toFixed(4)}</td>
+          <td class="px-3 py-2.5 text-right font-mono">${(best.accuracy * 100).toFixed(1)}%</td>
+          <td class="px-3 py-2.5 text-right font-mono">${best.roc_auc.toFixed(3)}</td>
+          <td class="px-3 py-2.5 text-slate-500 text-xs">${r.best_model.replace(/_/g, ' ')}</td>
+        </tr>`;
+      }).join('');
+
+      // Per-model breakdown
+      const modelNames = ['logistic_regression', 'random_forest', 'xgboost', 'gradient_boosting'];
+      document.getElementById('exp-per-model').innerHTML = modelNames.map(model => {
+        const modelRows = result.windows.map(r => ({ ...r, m: r.models[model] }));
+        const bestRow = modelRows.reduce((a, b) => a.m.log_loss < b.m.log_loss ? a : b);
+        return `<details class="border border-slate-200 rounded-lg">
+          <summary class="px-4 py-2 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50 flex justify-between">
+            <span>${model.replace(/_/g, ' ')}</span>
+            <span class="text-slate-400">Best: ${bestRow.window} (LL ${bestRow.m.log_loss.toFixed(4)})</span>
+          </summary>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead><tr class="bg-slate-50 text-slate-400">
+                <th class="px-4 py-1.5 text-left">Window</th>
+                <th class="px-3 py-1.5 text-right">Log Loss</th>
+                <th class="px-3 py-1.5 text-right">Accuracy</th>
+                <th class="px-3 py-1.5 text-right">AUC</th>
+              </tr></thead>
+              <tbody>${modelRows.map(r => `
+                <tr class="${r.window === bestRow.window ? 'bg-blue-50 font-semibold' : 'border-t border-slate-100'}">
+                  <td class="px-4 py-1.5">${r.window}</td>
+                  <td class="px-3 py-1.5 text-right font-mono">${r.m.log_loss.toFixed(4)}</td>
+                  <td class="px-3 py-1.5 text-right font-mono">${(r.m.accuracy * 100).toFixed(1)}%</td>
+                  <td class="px-3 py-1.5 text-right font-mono">${r.m.roc_auc.toFixed(3)}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </details>`;
+      }).join('');
+
+      document.getElementById('exp-results').classList.remove('hidden');
+      document.getElementById('exp-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ── Recent Matches ─────────────────────────────────────────────────────
+    let matchesOffset = 0;
+    let matchesTotal = 0;
+    const MATCHES_LIMIT = 50;
+    let matchesFilterTimeout = null;
+    let matchesLoaded = false;
+
+    function toggleRecentMatches() {
+      const body = document.getElementById('matches-body');
+      body.classList.toggle('hidden');
+      document.getElementById('matches-chevron').classList.toggle('rotate-180');
+      if (!body.classList.contains('hidden') && !matchesLoaded) loadMatches();
+    }
+
+    function onMatchesFilter() {
+      clearTimeout(matchesFilterTimeout);
+      matchesFilterTimeout = setTimeout(() => { matchesOffset = 0; loadMatches(); }, 350);
+    }
+
+    async function loadMatches() {
+      const team = document.getElementById('matches-team-filter').value.trim();
+      const params = new URLSearchParams({ limit: MATCHES_LIMIT, offset: matchesOffset });
+      if (team) params.set('team', team);
+
+      document.getElementById('matches-tbody').innerHTML =
+        '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400 text-sm">Loading…</td></tr>';
+
+      try {
+        const res = await fetch('/api/recent-matches?' + params);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        matchesTotal = data.total;
+        matchesLoaded = true;
+        renderMatches(data.matches);
+        updateMatchesPager(data.offset, data.total, data.limit);
+
+        const badge = document.getElementById('matches-badge');
+        badge.textContent = matchesTotal.toLocaleString() + ' matches';
+        badge.className = 'text-xs font-normal px-2 py-0.5 rounded-full bg-slate-100 text-slate-600';
+        badge.classList.remove('hidden');
+      } catch (e) {
+        document.getElementById('matches-tbody').innerHTML =
+          `<tr><td colspan="6" class="px-4 py-4 text-center text-red-500 text-sm">${escHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    function renderMatches(matches) {
+      if (!matches.length) {
+        document.getElementById('matches-tbody').innerHTML =
+          '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400 text-sm">No matches found.</td></tr>';
+        return;
+      }
+      document.getElementById('matches-tbody').innerHTML = matches.map((m, i) => {
+        const t1wins = m.winner_id === 1;
+        const t2wins = m.winner_id === 2;
+        const t1cls = t1wins ? 'font-semibold text-slate-800' : 'text-slate-400';
+        const t2cls = t2wins ? 'font-semibold text-slate-800' : 'text-slate-400';
+        const date = m.date ? String(m.date).slice(0, 10) : '—';
+        const bestof = m.bestof ? `Bo${m.bestof}` : '—';
+        const raw = m.tournament_pagename || '';
+        const tournament = raw.split('/').pop().replace(/_/g, ' ') || '—';
+        return `<tr class="${i % 2 ? 'bg-slate-50/50' : ''} hover:bg-blue-50/30 transition-colors">
+          <td class="px-4 py-2 text-slate-400 text-xs whitespace-nowrap">${date}</td>
+          <td class="px-4 py-2 text-right ${t1cls}">${escHtml(m.team1_name || '—')}</td>
+          <td class="px-3 py-2 text-center font-mono text-slate-600 font-semibold whitespace-nowrap">${m.team1_score ?? '—'}–${m.team2_score ?? '—'}</td>
+          <td class="px-4 py-2 ${t2cls}">${escHtml(m.team2_name || '—')}</td>
+          <td class="px-3 py-2 text-center text-xs text-slate-400">${bestof}</td>
+          <td class="px-4 py-2 text-xs text-slate-400 truncate max-w-[200px]" title="${escHtml(raw)}">${escHtml(tournament)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function updateMatchesPager(offset, total, limit) {
+      const from = total === 0 ? 0 : offset + 1;
+      const to = Math.min(offset + limit, total);
+      document.getElementById('matches-pager-info').textContent =
+        total === 0 ? 'No results' : `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
+      document.getElementById('matches-prev-btn').disabled = offset === 0;
+      document.getElementById('matches-next-btn').disabled = offset + limit >= total;
+    }
+
+    function matchesPrev() { matchesOffset = Math.max(0, matchesOffset - MATCHES_LIMIT); loadMatches(); }
+    function matchesNext() { matchesOffset += MATCHES_LIMIT; loadMatches(); }
 
     // ── Start ──────────────────────────────────────────────────────────────
     init();
