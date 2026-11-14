@@ -11,8 +11,8 @@ import sys
 import pandas as pd
 from src.db.database import initialize_db, upsert_tournaments, upsert_matches, get_match_count
 
-TOURNAMENTS_CSV = "data/processed/cs2_tournaments.csv"
-MATCHES_CSV = "data/processed/cs2_matches_deduplicated.csv"
+TOURNAMENTS_CSV = "data/archive/legacy_csv/cs2_tournaments.csv"
+MATCHES_CSV = "data/archive/legacy_csv/cs2_matches_deduplicated.csv"
 
 # Columns kept in DB (tournament_id and location are dropped)
 TOURNAMENT_DB_COLS = ["pagename", "name", "startdate", "enddate", "tier", "prizepool", "type", "game"]
