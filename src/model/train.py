@@ -1,190 +1,161 @@
+"""
+Model training pipeline.
+
+1. Walk-forward backtest every model (see src/model/backtest.py) and pick the
+   best by mean out-of-fold log loss — not by a single 80/20 split.
+2. Choose a calibration method (none / Platt / isotonic) per model from rolling
+   out-of-fold evaluation, and fit it on all out-of-fold predictions.
+3. Refit every model on all rows and save it as a `Predictor` bundle
+   (model + scaler + calibrator). Training is team-order symmetrized by default.
+4. Record the run in the `training_runs` table.
+"""
+
+import argparse
 import json
 import os
 
 import joblib
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
 
-from src.model.evaluate import evaluate_model, plot_calibration, print_evaluation_report
+from src.model.backtest import load_feature_matrix, run_backtest, select_calibration
+from src.model.evaluate import plot_calibration
+from src.model.features import FEATURE_COLS, feature_frame_to_xy
+from src.model.predictor import MODEL_NAMES, Calibrator, Predictor
 from src.utils.logger import get_logger
 
 logger = get_logger("cs2predictor.model.train")
 
-FEATURE_MATRIX_PATH = "data/processed/feature_matrix.csv"
 MODELS_DIR = "data/models"
 
-# Features used for training (excludes target and metadata columns)
-FEATURE_COLS = [
-    "team1_elo", "team2_elo", "elo_diff",
-    "team1_wr_all", "team2_wr_all", "wr_diff_all",
-    "team1_wr_20", "team2_wr_20", "team1_wr_50", "team2_wr_50",
-    "team1_form", "team2_form", "form_diff",
-    "team1_streak", "team2_streak", "streak_diff",
-    "h2h_wr",
-    "team1_tier_wr", "team2_tier_wr",
-    "team1_days_since_last", "team2_days_since_last",
-    "tier", "log_prizepool", "is_online", "is_offline", "is_hybrid",
-]
-
-TARGET = "team1_win"
+DEFAULT_N_FOLDS = 5
+DEFAULT_TEST_DAYS = 300  # total span covered by the backtest folds
 
 
-def get_models():
-    """Return dict of model name -> model instance."""
-    return {
-        "logistic_regression": LogisticRegression(max_iter=1000, random_state=42),
-        "random_forest": RandomForestClassifier(
-            n_estimators=200, max_depth=10, min_samples_leaf=20, random_state=42, n_jobs=-1
-        ),
-        "xgboost": XGBClassifier(
-            n_estimators=200, max_depth=6, learning_rate=0.1,
-            min_child_weight=20, random_state=42, eval_metric="logloss",
-            verbosity=0,
-        ),
-        "gradient_boosting": GradientBoostingClassifier(
-            n_estimators=200, max_depth=5, learning_rate=0.1,
-            min_samples_leaf=20, random_state=42,
-        ),
-    }
-
-
-def train_pipeline(cutoff_date=None):
-    """Full training pipeline: load, split, train, evaluate, save.
+def train_pipeline(cutoff_date=None, train_start_date=None, n_folds=DEFAULT_N_FOLDS,
+                   test_days=DEFAULT_TEST_DAYS, symmetric=True, record=True,
+                   models_dir=MODELS_DIR):
+    """Backtest, select, calibrate, refit on all data, save, and record.
 
     Args:
-        cutoff_date: Optional YYYY-MM-DD string passed through from
-                     build_feature_matrix; recorded in metadata only.
+        cutoff_date / train_start_date: recorded in metadata only (they are
+            applied when the feature matrix is built).
+        n_folds, test_days: walk-forward backtest configuration.
+        symmetric: train on both team orders and average predictions over them.
+        record: write the run to the training_runs table.
     Returns:
-        dict of training metadata (best model, metrics, periods, etc.)
+        dict of training metadata (also saved to training_metadata.json)
     """
     logger.info("=" * 60)
     logger.info("STARTING MODEL TRAINING PIPELINE")
     logger.info("=" * 60)
 
-    # Load feature matrix
-    df = pd.read_csv(FEATURE_MATRIX_PATH)
-    logger.info(f"Loaded feature matrix: {len(df)} rows, {len(df.columns)} columns")
+    df = load_feature_matrix()
+    X, y = feature_frame_to_xy(df)
+    logger.info(f"Loaded feature matrix: {len(df)} rows ({df['date'].min()} → {df['date'].max()})")
+    logger.info(f"Order-symmetric training: {symmetric}")
 
-    # Verify all feature columns exist
-    missing = [c for c in FEATURE_COLS if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing feature columns: {missing}")
+    # 1. Walk-forward backtest
+    bt = run_backtest(df, MODEL_NAMES, n_folds=n_folds, test_days=test_days, symmetric=symmetric)
+    best_name = bt.best_model
 
-    X = df[FEATURE_COLS].values
-    y = df[TARGET].values
+    logger.info("-" * 60)
+    logger.info(f"Backtest ({len(bt.folds)} folds, {bt.test_size} test rows) — mean metrics:")
+    for name, m in sorted(bt.mean_metrics.items(), key=lambda kv: kv[1]["log_loss"]):
+        logger.info(
+            f"  {name:22s} log_loss={m['log_loss']:.4f} ±{m['log_loss_std']:.4f} "
+            f"acc={m['accuracy']:.4f} auc={m['roc_auc']:.4f} brier={m['brier_score']:.4f}"
+        )
+    logger.info(f"Best model: {best_name}")
 
-    # Time-based split (80/20 chronologically)
-    split_idx = int(len(df) * 0.8)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
-    logger.info(f"Time-based split: {len(X_train)} train, {len(X_test)} test")
-    logger.info(f"Train period: {df['date'].iloc[0]} to {df['date'].iloc[split_idx - 1]}")
-    logger.info(f"Test period: {df['date'].iloc[split_idx]} to {df['date'].iloc[-1]}")
+    # 2. Calibration selection per model
+    calibration = {}
+    for name in MODEL_NAMES:
+        calibration[name] = select_calibration(bt.oof_proba[name], bt.oof_y, bt.oof_fold)
+        cal = calibration[name]
+        if cal.get("log_loss"):
+            ll = ", ".join(f"{k}={v:.4f}" for k, v in cal["log_loss"].items())
+            logger.info(f"  calibration {name:22s} → {cal['method']:8s} ({ll})")
 
-    # Fit scaler on train data (for logistic regression)
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # 3. Refit on all data and save
+    os.makedirs(models_dir, exist_ok=True)
+    predictors = {}
+    for name in MODEL_NAMES:
+        logger.info(f"Refitting {name} on all {len(X)} rows…")
+        pred = Predictor.fit(name, X, y, symmetric=symmetric)
+        method = calibration[name]["method"]
+        if method != "none":
+            pred.calibrator = Calibrator(method).fit(bt.oof_proba[name], bt.oof_y)
+        predictors[name] = pred
+        joblib.dump(pred, os.path.join(models_dir, f"model_{name}.joblib"))
+    joblib.dump(predictors[best_name], os.path.join(models_dir, "best_model.joblib"))
 
-    os.makedirs(MODELS_DIR, exist_ok=True)
+    # Stale artifact from the pre-Predictor format (scaler now lives in each bundle)
+    legacy_scaler = os.path.join(models_dir, "scaler.joblib")
+    if os.path.exists(legacy_scaler):
+        os.remove(legacy_scaler)
 
-    # Train and evaluate all models
-    models = get_models()
-    results = {}
+    importances = {name: p.feature_importances(FEATURE_COLS) for name, p in predictors.items()}
+    with open(os.path.join(models_dir, "feature_importances.json"), "w") as f:
+        json.dump(importances, f, indent=2)
 
-    logger.info("")
-    logger.info("Model evaluation on test set:")
-    logger.info("-" * 100)
+    # Calibration plot on out-of-fold predictions for the best model
+    curves = {f"{best_name} (uncalibrated)": bt.oof_proba[best_name]}
+    best_method = calibration[best_name]["method"]
+    if best_method != "none":
+        c = predictors[best_name].calibrator
+        p = bt.oof_proba[best_name]
+        curves[f"{best_name} + {best_method} (in-sample)"] = 0.5 * (c.transform(p) + 1 - c.transform(1 - p))
+    plot_calibration(bt.oof_y, curves, best_name, models_dir)
 
-    for name, model in models.items():
-        # Logistic regression uses scaled data; tree models use raw
-        if name == "logistic_regression":
-            model.fit(X_train_scaled, y_train)
-            y_pred = model.predict(X_test_scaled)
-            y_proba = model.predict_proba(X_test_scaled)[:, 1]
-        else:
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            y_proba = model.predict_proba(X_test)[:, 1]
-
-        metrics = evaluate_model(y_test, y_pred, y_proba)
-        results[name] = {"model": model, "metrics": metrics, "y_proba": y_proba}
-        print_evaluation_report(name, metrics)
-
-        # Save individual model
-        model_path = os.path.join(MODELS_DIR, f"model_{name}.joblib")
-        joblib.dump(model, model_path)
-
-    # Select best model by log loss
-    best_name = min(results, key=lambda k: results[k]["metrics"]["log_loss"])
-    best_metrics = results[best_name]["metrics"]
-    logger.info("-" * 100)
-    logger.info(f"Best model: {best_name} (log_loss={best_metrics['log_loss']:.4f})")
-
-    # Save best model
-    best_model_path = os.path.join(MODELS_DIR, "best_model.joblib")
-    joblib.dump(results[best_name]["model"], best_model_path)
-    logger.info(f"Saved best model to {best_model_path}")
-
-    # Save scaler
-    scaler_path = os.path.join(MODELS_DIR, "scaler.joblib")
-    joblib.dump(scaler, scaler_path)
-
-    # Save training metadata
     metadata = {
         "best_model": best_name,
         "cutoff_date": cutoff_date,
+        "train_start_date": train_start_date,
+        "symmetric": symmetric,
         "feature_columns": FEATURE_COLS,
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "train_period": [str(df["date"].iloc[0]), str(df["date"].iloc[split_idx - 1])],
-        "test_period": [str(df["date"].iloc[split_idx]), str(df["date"].iloc[-1])],
-        "results": {
-            name: res["metrics"] for name, res in results.items()
+        "selection": "walk_forward_mean_log_loss",
+        # Final models are fit on every row; test_* describe the backtest folds.
+        "train_size": int(len(X)),
+        "test_size": bt.test_size,
+        "train_period": [str(df["date"].iloc[0]), str(df["date"].iloc[-1])],
+        "test_period": bt.test_period,
+        "results": bt.mean_metrics,
+        "calibration": {
+            name: {"method": c["method"], "log_loss": c.get("log_loss", {})}
+            for name, c in calibration.items()
         },
-    }
-    metadata_path = os.path.join(MODELS_DIR, "training_metadata.json")
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    # Save feature importances (for tree-based models)
-    importances = {}
-    for name in ["random_forest", "xgboost", "gradient_boosting"]:
-        model = results[name]["model"]
-        imp = model.feature_importances_
-        importances[name] = {
-            FEATURE_COLS[i]: float(imp[i]) for i in range(len(FEATURE_COLS))
-        }
-    # Logistic regression coefficients
-    lr_model = results["logistic_regression"]["model"]
-    importances["logistic_regression"] = {
-        FEATURE_COLS[i]: float(abs(lr_model.coef_[0][i])) for i in range(len(FEATURE_COLS))
+        "backtest": {"n_folds": n_folds, "test_days": test_days, "folds": bt.folds},
     }
 
-    imp_path = os.path.join(MODELS_DIR, "feature_importances.json")
-    with open(imp_path, "w") as f:
-        json.dump(importances, f, indent=2)
+    if record:
+        from src.db.database import record_training_run
+        metadata["run_id"] = record_training_run(
+            kind="train",
+            best_model=best_name,
+            best_log_loss=bt.mean_metrics[best_name]["log_loss"],
+            params={"cutoff_date": cutoff_date, "train_start_date": train_start_date,
+                    "n_folds": n_folds, "test_days": test_days, "symmetric": symmetric},
+            result=metadata,
+        )
+        logger.info(f"Recorded training run #{metadata['run_id']}")
 
-    # Calibration plot for best model
-    plot_calibration(
-        y_test, results[best_name]["y_proba"], best_name, MODELS_DIR
-    )
+    with open(os.path.join(models_dir, "training_metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2, default=str)
 
     logger.info("=" * 60)
     logger.info("TRAINING COMPLETE")
     logger.info("=" * 60)
-    logger.info(f"Models saved to: {MODELS_DIR}/")
-    logger.info(f"Best model: {best_name}")
-    for name, res in sorted(results.items(), key=lambda x: x[1]["metrics"]["log_loss"]):
-        m = res["metrics"]
-        logger.info(f"  {name}: log_loss={m['log_loss']:.4f}, accuracy={m['accuracy']:.4f}, auc={m['roc_auc']:.4f}")
-
+    logger.info(f"Models saved to: {models_dir}/  (best: {best_name}, calibration: {best_method})")
     return metadata
 
 
 if __name__ == "__main__":
-    train_pipeline()
+    ap = argparse.ArgumentParser(description="Backtest, select, calibrate and train models")
+    ap.add_argument("--folds", type=int, default=DEFAULT_N_FOLDS, help="walk-forward folds (default 5)")
+    ap.add_argument("--test-days", type=int, default=DEFAULT_TEST_DAYS,
+                    help="total days covered by the backtest folds (default 300)")
+    ap.add_argument("--no-symmetric", action="store_true",
+                    help="train on raw Liquipedia team order (not recommended; for comparison)")
+    ap.add_argument("--no-record", action="store_true", help="don't save to training_runs")
+    args = ap.parse_args()
+    train_pipeline(n_folds=args.folds, test_days=args.test_days,
+                   symmetric=not args.no_symmetric, record=not args.no_record)

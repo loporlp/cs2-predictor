@@ -315,9 +315,9 @@
 
       <div id="exp-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-4">
         <p class="text-xs text-slate-500 leading-relaxed">
-          Finds the optimal amount of historical data for training. Fixes the last <em>N</em> days as a
-          held-out test set, then trains on windows of 3, 6, 9, 12, 18, 24 months and all available data —
-          comparing log loss on the <strong>same</strong> test period for a fair result.
+          Finds the optimal amount of historical data for training. Splits the last <em>N</em> days into
+          3 walk-forward folds (each trained only on earlier data), then compares windows of 3, 6, 9, 12, 18,
+          24 months and all available data by <strong>mean</strong> log loss over the same folds.
           Requires the feature matrix to exist (run Retrain first if needed).
         </p>
 
@@ -374,6 +374,43 @@
       </div>
     </section>
 
+    <!-- ── Run History ──────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <button onclick="toggleRunHistory()"
+        class="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
+        <span class="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          🗂️ Run History
+        </span>
+        <svg id="runs-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 rotate-0"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      <div id="runs-body" class="hidden border-t border-slate-100 px-5 py-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <p class="text-xs text-slate-500">Every retrain and window search is saved, so results can be compared over time.</p>
+          <button onclick="loadRunHistory()" class="text-xs text-blue-600 hover:underline">Refresh</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                <th class="px-4 py-2 text-left">#</th>
+                <th class="px-3 py-2 text-left">When (UTC)</th>
+                <th class="px-3 py-2 text-left">Kind</th>
+                <th class="px-3 py-2 text-left">Best model</th>
+                <th class="px-3 py-2 text-right">Log Loss</th>
+                <th class="px-3 py-2 text-left">Params</th>
+              </tr>
+            </thead>
+            <tbody id="runs-tbody" class="divide-y divide-slate-100">
+              <tr><td colspan="6" class="px-4 py-3 text-xs text-slate-400">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- ── Retrain Model ─────────────────────────────────────────────── -->
     <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
       <!-- Collapsible header -->
@@ -403,13 +440,13 @@
             <label class="block text-xs font-medium text-slate-600 mb-1">Training window</label>
             <select id="train-window"
               class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="">All available data</option>
+              <option value="" selected>All available data ★ optimal</option>
               <option value="3">Last 3 months</option>
               <option value="6">Last 6 months</option>
               <option value="9">Last 9 months</option>
               <option value="12">Last 12 months</option>
               <option value="18">Last 18 months</option>
-              <option value="24" selected>Last 24 months ★ optimal</option>
+              <option value="24">Last 24 months</option>
             </select>
           </div>
           <div>
@@ -1221,6 +1258,45 @@
 
     // ── Window Search ──────────────────────────────────────────────────────
     let expPoll = null;
+
+    // ── Run history ─────────────────────────────────────────────────────────
+    function toggleRunHistory() {
+      const body = document.getElementById('runs-body');
+      body.classList.toggle('hidden');
+      document.getElementById('runs-chevron').classList.toggle('rotate-180');
+      if (!body.classList.contains('hidden')) loadRunHistory();
+    }
+
+    function escapeHtml(v) {
+      return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function loadRunHistory() {
+      const tbody = document.getElementById('runs-tbody');
+      try {
+        const data = await (await fetch('/api/training-runs?limit=50')).json();
+        if (!data.ok) throw new Error(data.error);
+        if (!data.runs.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-3 text-xs text-slate-400">No runs recorded yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.runs.map(r => {
+          const params = Object.entries(r.params || {})
+            .filter(([, v]) => v !== null && v !== undefined)
+            .map(([k, v]) => `${k}=${v}`).join(', ');
+          return `<tr class="hover:bg-slate-50">
+            <td class="px-4 py-2 font-mono text-xs text-slate-400">${r.run_id}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${escapeHtml(r.created_at.replace('T', ' ').replace('Z', ''))}</td>
+            <td class="px-3 py-2 text-xs">${escapeHtml(r.kind.replace('_', ' '))}</td>
+            <td class="px-3 py-2 text-xs">${escapeHtml((r.best_model || '').replace(/_/g, ' '))}</td>
+            <td class="px-3 py-2 text-right font-mono text-xs">${r.best_log_loss != null ? r.best_log_loss.toFixed(4) : '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-400">${escapeHtml(params)}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-3 text-xs text-red-500">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
 
     function toggleWindowSearch() {
       document.getElementById('exp-body').classList.toggle('hidden');

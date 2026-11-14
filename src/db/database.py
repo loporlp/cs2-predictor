@@ -2,15 +2,17 @@
 Central SQLite database module for CS2 predictor.
 
 All pipeline files import from here — no pipeline imports sqlite3 directly.
-DB path: data/processed/cs2_data.db
+DB path: data/processed/cs2_data.db (override with the CS2_DB_PATH env var)
 """
 
+import json
+import os
 import sqlite3
 from contextlib import contextmanager
 
 import pandas as pd
 
-DB_PATH = "data/processed/cs2_data.db"
+DB_PATH = os.environ.get("CS2_DB_PATH", "data/processed/cs2_data.db")
 
 _SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -53,6 +55,19 @@ CREATE TABLE IF NOT EXISTS fetch_log (
     tournament_pagename TEXT PRIMARY KEY NOT NULL,
     fetched_at          TEXT
 );
+
+-- History of training runs and window-search experiments, so results can be
+-- compared over time instead of being overwritten.
+CREATE TABLE IF NOT EXISTS training_runs (
+    run_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT NOT NULL,
+    kind          TEXT NOT NULL,          -- 'train' | 'window_search'
+    best_model    TEXT,
+    best_log_loss REAL,
+    params        TEXT,                   -- JSON
+    result        TEXT                    -- JSON (full metadata / experiment output)
+);
+CREATE INDEX IF NOT EXISTS idx_training_runs_kind ON training_runs (kind, created_at);
 """
 
 # Migration: treat all tournaments that already have matches as fully fetched.
@@ -75,8 +90,7 @@ _MATCH_COLUMNS = [
 
 def initialize_db():
     """Create tables and indexes if they don't exist (idempotent)."""
-    import os
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.executescript(_SCHEMA_SQL)
@@ -258,3 +272,68 @@ def get_match_count() -> int:
         return int(df["cnt"].iloc[0])
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Training run history
+# ---------------------------------------------------------------------------
+
+def record_training_run(kind: str, best_model: str, best_log_loss: float,
+                        params: dict, result: dict) -> int:
+    """Persist one training / experiment run. Returns the new run_id."""
+    from datetime import datetime, timezone
+    initialize_db()
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO training_runs (created_at, kind, best_model, best_log_loss, params, result) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                kind,
+                best_model,
+                None if best_log_loss is None else float(best_log_loss),
+                json.dumps(params, default=str),
+                json.dumps(result, default=str),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def list_training_runs(kind: str = None, limit: int = 50) -> list[dict]:
+    """Most recent runs first, without the (large) result payload."""
+    initialize_db()
+    conn = get_connection()
+    try:
+        sql = "SELECT run_id, created_at, kind, best_model, best_log_loss, params FROM training_runs"
+        args = []
+        if kind:
+            sql += " WHERE kind = ?"
+            args.append(kind)
+        sql += " ORDER BY run_id DESC LIMIT ?"
+        args.append(int(limit))
+        rows = conn.execute(sql, args).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"run_id": r[0], "created_at": r[1], "kind": r[2], "best_model": r[3],
+         "best_log_loss": r[4], "params": json.loads(r[5]) if r[5] else {}}
+        for r in rows
+    ]
+
+
+def get_training_run(run_id: int):
+    """Full run record including the result payload, or None."""
+    initialize_db()
+    conn = get_connection()
+    try:
+        r = conn.execute(
+            "SELECT run_id, created_at, kind, best_model, best_log_loss, params, result "
+            "FROM training_runs WHERE run_id = ?", (int(run_id),)
+        ).fetchone()
+    finally:
+        conn.close()
+    if r is None:
+        return None
+    return {"run_id": r[0], "created_at": r[1], "kind": r[2], "best_model": r[3],
+            "best_log_loss": r[4], "params": json.loads(r[5]) if r[5] else {},
+            "result": json.loads(r[6]) if r[6] else None}

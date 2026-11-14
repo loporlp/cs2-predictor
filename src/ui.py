@@ -80,7 +80,7 @@ def _run_retrain(cutoff_date, train_start_date):
         from src.model.train import train_pipeline
 
         build_feature_matrix(cutoff_date=cutoff_date, train_start_date=train_start_date)
-        metadata = train_pipeline(cutoff_date=cutoff_date)
+        metadata = train_pipeline(cutoff_date=cutoff_date, train_start_date=train_start_date)
 
         _clear_artifacts()   # force reload on next prediction
 
@@ -109,7 +109,7 @@ def index():
 @app.route("/api/teams")
 def teams():
     """Return all known teams sorted by Elo rating."""
-    elo, stats, _, _, _, _ = _get_artifacts()
+    elo, stats, _, _, _ = _get_artifacts()
     teams_list = sorted(
         [
             {
@@ -206,7 +206,7 @@ def predict_match():
         t_type = data.get("t_type", "Offline")
         model_name = data.get("model_name", "best")
 
-        elo, stats, model, scaler, metadata, actual_model_name = load_artifacts(model_name)
+        elo, stats, predictor, metadata, actual_model_name = load_artifacts(model_name)
 
         warnings = []
         for team in [team1, team2]:
@@ -217,10 +217,8 @@ def predict_match():
                 warnings.append(f"'{team}' has only {count} matches — prediction may be unreliable.")
 
         X = build_feature_vector(elo, stats, team1, team2, tier, prizepool, t_type)
-        X_pred = scaler.transform(X) if actual_model_name == "logistic_regression" else X
-        proba = model.predict_proba(X_pred)[0]
-        team1_prob = proba[1]
-        team2_prob = proba[0]
+        team1_prob = float(predictor.predict_proba(X)[0])
+        team2_prob = 1.0 - team1_prob
 
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
@@ -373,7 +371,7 @@ def _run_window_search(test_days):
     root.addHandler(handler)
 
     try:
-        from src.experiments.window_search import run_window_search
+        from src.model.backtest import run_window_search
         result = run_window_search(test_days=test_days)
 
         with _experiment_lock:
@@ -416,6 +414,33 @@ def window_search_status():
     """Return current window search state (for polling)."""
     with _experiment_lock:
         return jsonify(dict(_experiment_state))
+
+
+# ---------------------------------------------------------------------------
+# Training run history
+# ---------------------------------------------------------------------------
+
+@app.route("/api/training-runs")
+def training_runs():
+    """List recorded training / window-search runs, newest first."""
+    try:
+        from src.db.database import list_training_runs
+        kind = request.args.get("kind") or None
+        limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+        return jsonify({"ok": True, "runs": list_training_runs(kind=kind, limit=limit)})
+    except Exception as exc:
+        logger.exception("Training runs error")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/training-runs/<int:run_id>")
+def training_run_detail(run_id):
+    """Full record (including metrics payload) for one run."""
+    from src.db.database import get_training_run
+    run = get_training_run(run_id)
+    if run is None:
+        return jsonify({"ok": False, "error": f"Run {run_id} not found"}), 404
+    return jsonify({"ok": True, "run": run})
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,29 @@ STATS_SAVE_PATH = "data/models/team_stats.json"
 
 MIN_MATCHES = 5  # Minimum prior matches before a team enters training data
 
+# Defaults for features that are undefined (no H2H history, unknown tier, ...).
+# Shared with src/predict.py so training and inference fill gaps identically.
+FILL_DEFAULTS = {
+    "h2h_wr": 0.5,
+    "team1_tier_wr": 0.5,
+    "team2_tier_wr": 0.5,
+    "team1_days_since_last": 30,
+    "team2_days_since_last": 30,
+    "tier": 4,
+    "log_prizepool": 0.0,
+}
+
+
+def fill_feature_defaults(df_features: pd.DataFrame) -> pd.DataFrame:
+    """Fill undefined features with FILL_DEFAULTS, then any remaining numeric NaN with 0."""
+    df_features = df_features.copy()
+    for col, default in FILL_DEFAULTS.items():
+        if col in df_features.columns:
+            df_features[col] = pd.to_numeric(df_features[col], errors="coerce").fillna(default)
+    numeric_cols = df_features.select_dtypes(include=[np.number]).columns
+    df_features[numeric_cols] = df_features[numeric_cols].fillna(0)
+    return df_features
+
 
 def load_and_clean_data():
     """Load match and tournament data, apply cleaning filters."""
@@ -152,23 +175,7 @@ def build_feature_matrix(cutoff_date=None, train_start_date=None):
             f"{len(df_features)} rows kept"
         )
 
-    # Fill NaN defaults
-    fill_defaults = {
-        "h2h_wr": 0.5,
-        "team1_tier_wr": 0.5,
-        "team2_tier_wr": 0.5,
-        "team1_days_since_last": 30,
-        "team2_days_since_last": 30,
-        "tier": 4,
-        "log_prizepool": 0.0,
-    }
-    for col, default in fill_defaults.items():
-        if col in df_features.columns:
-            df_features[col] = df_features[col].fillna(default)
-
-    # Fill any remaining NaN in numeric columns
-    numeric_cols = df_features.select_dtypes(include=[np.number]).columns
-    df_features[numeric_cols] = df_features[numeric_cols].fillna(0)
+    df_features = fill_feature_defaults(df_features)
 
     # Save outputs
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

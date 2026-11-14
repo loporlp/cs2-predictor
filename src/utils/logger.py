@@ -2,7 +2,8 @@
 Logging infrastructure for CS2 Predictor.
 
 Provides hierarchical loggers with configurable output formats and levels.
-Supports both console and file output.
+Supports both console and file output. Console logs go to stderr so that
+stdout stays clean for program output (e.g. `--json`).
 """
 
 import logging
@@ -46,7 +47,7 @@ def setup_logger(
 
     # Console handler
     if console:
-        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
@@ -78,7 +79,7 @@ def get_logger(name: str) -> logging.Logger:
     if not logger.handlers:
         logger.setLevel(DEFAULT_LEVEL)
         formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
-        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(DEFAULT_LEVEL)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)

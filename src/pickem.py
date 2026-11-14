@@ -136,9 +136,7 @@ def precompute_pairwise_probs(
     t_type: str,
     elo,
     stats,
-    model,
-    scaler,
-    actual_model_name: str,
+    predictor,
 ) -> Dict[FrozenSet, Dict[str, float]]:
     """Pre-compute win probabilities for every pair of teams.
 
@@ -152,15 +150,9 @@ def precompute_pairwise_probs(
         for j in range(i + 1, n):
             a, b = team_names[i], team_names[j]
             X = build_feature_vector(elo, stats, a, b, tier, prizepool, t_type)
-
-            if actual_model_name == "logistic_regression":
-                X_pred = scaler.transform(X)
-            else:
-                X_pred = X
-
-            proba = model.predict_proba(X_pred)[0]
-            p_a = float(proba[1])  # P(team1=a wins)
-            p_b = float(proba[0])  # P(team2=b wins)
+            # Predictor is order-symmetric, so seed order doesn't bias the result
+            p_a = float(predictor.predict_proba(X)[0])  # P(a beats b)
+            p_b = 1.0 - p_a
 
             pairwise[frozenset({a, b})] = {a: p_a, b: p_b}
 
@@ -239,7 +231,7 @@ def run_pickem(
     logger.info(
         "Loading artifacts for model '%s'…", model_name
     )
-    elo, stats, model, scaler, metadata, actual_model_name = load_artifacts(model_name)
+    elo, stats, predictor, metadata, actual_model_name = load_artifacts(model_name)
     logger.info("Model loaded: %s", actual_model_name)
 
     team_names = [name for _, name in sorted(lineup, key=lambda x: x[0])]
@@ -266,7 +258,7 @@ def run_pickem(
     )
     pairwise_probs = precompute_pairwise_probs(
         team_names, tier, prizepool, t_type,
-        elo, stats, model, scaler, actual_model_name,
+        elo, stats, predictor,
     )
 
     rng = np.random.default_rng(seed)
